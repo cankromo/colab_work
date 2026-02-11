@@ -57,7 +57,7 @@ def main():
         n_epochs=10,
         gamma=0.99,
         tensorboard_log=run_path,
-        seed=args.seed,
+        
     )
     model.set_logger(new_logger)
 
