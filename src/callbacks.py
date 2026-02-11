@@ -1,53 +1,48 @@
 from collections import deque
-import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 
 class OutcomeStatsCallback(BaseCallback):
     """
-    A custom callback to print capture/escape/truncation statistics during training.
+    capture/escape/timeout istatistiklerini eğitim sırasında yazdırır.
+    Outcome'u env'in info'sundaki 'episode_outcome' alanından okur.
     """
 
-    def __init__(self, print_every: int, window: int, verbose=0):
+    def __init__(self, print_every: int = 5000, window: int = 200, verbose=0):
         super().__init__(verbose)
-        self.print_every = print_every
-        self.window = window
-        # A deque to store the outcomes of the last `window` episodes
+        self.print_every = int(print_every)
+        self.window = int(window)
         self.outcomes = deque(maxlen=self.window)
 
     def _on_step(self) -> bool:
-        """
-        This method will be called by the model after each call to `env.step()`.
-        """
-        # `dones` is a boolean array indicating if an episode has ended in any of the parallel environments.
-        # `infos` is a list of dictionaries, one for each environment.
-        for i, done in enumerate(self.locals["dones"]):
-            if done:
-                # An episode has just finished. The info dict contains the episode stats.
-                info = self.locals["infos"][i]
-                episode_reward = info.get("episode", {}).get("r", 0)
+        dones = self.locals.get("dones", [])
+        infos = self.locals.get("infos", [])
 
-                # Determine the outcome based on the terminal reward.
-                # +1 for capture, -1 for escape.
-                if episode_reward > 0.5:
-                    self.outcomes.append("capture")
-                elif episode_reward < -0.5:
-                    self.outcomes.append("escape")
+        for i, done in enumerate(dones):
+            if not done:
+                continue
+
+            info = infos[i] if i < len(infos) else {}
+            outcome = info.get("episode_outcome", None)
+
+            # Fallback: info yoksa time limit vs.
+            if outcome not in ("captured", "escaped", "timeout"):
+                # SB3 bazı durumlarda TimeLimit.truncated bırakır
+                if info.get("TimeLimit.truncated", False):
+                    outcome = "timeout"
                 else:
-                    self.outcomes.append("truncated")
+                    outcome = "timeout"
 
-        # Print stats every `print_every` steps if the deque is full.
-        if self.n_calls % self.print_every == 0 and len(self.outcomes) == self.window:
+            self.outcomes.append(outcome)
+
+        if self.n_calls % self.print_every == 0 and len(self.outcomes) >= max(10, self.window // 2):
             total = len(self.outcomes)
-            captures = self.outcomes.count("capture")
-            escapes = self.outcomes.count("escape")
-            truncations = self.outcomes.count("truncated")
+            captures = sum(1 for x in self.outcomes if x == "captured")
+            escapes = sum(1 for x in self.outcomes if x == "escaped")
+            timeouts = sum(1 for x in self.outcomes if x == "timeout")
 
-            print(f"--- Timestep {self.n_calls} ---")
-            print(f"Stats over last {self.window} episodes:")
-            print(f"  Capture rate: {100 * captures / total:.2f}%")
-            print(f"  Escape rate:  {100 * escapes / total:.2f}%")
-            print(f"  Timeout rate: {100 * truncations / total:.2f}%")
-            print("--------------------")
+            print(f"[t={self.num_timesteps}] capture={100*captures/total:.2f}%, "
+                  f"escape={100*escapes/total:.2f}%, timeout={100*timeouts/total:.2f}%, "
+                  f"ep_cnt={total}")
 
         return True

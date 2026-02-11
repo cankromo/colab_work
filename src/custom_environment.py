@@ -15,7 +15,7 @@ class CustomEnvironment(ParallelEnv):
         "render_fps": 4,
     }
 
-    def __init__(self, render_mode=None, grid_size=10, num_guards=2, max_steps=100):
+    def __init__(self, render_mode=None, grid_size=10, num_guards=2, max_steps=100, seed=None):
         self.render_mode = render_mode
         self.grid_size = grid_size
         self.num_guards = num_guards
@@ -43,11 +43,14 @@ class CustomEnvironment(ParallelEnv):
             self.cell_size = self.window_size / self.grid_size
 
         # Escape penalty ağırlığı (küçük tut!)
-        # Terminal reward ±1 iken, bu shaping genelde ~0.00x mertebesinde olmalı.
         self.escape_penalty_lambda = 0.05
-
-        # Time penalty (isteğe bağlı ama öğrenmeyi hızlandırır)
+        # Time penalty
         self.time_penalty = 0.01
+
+        self._seed = seed
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
 
     def close(self):
         if self.window:
@@ -77,10 +80,8 @@ class CustomEnvironment(ParallelEnv):
         final_vec = 2 * escape_vec + avoid_vec
 
         if abs(final_vec[0]) > abs(final_vec[1]):
-            # x ekseni baskın
             return 1 if final_vec[0] > 0 else 0
         else:
-            # y ekseni baskın
             return 3 if final_vec[1] > 0 else 2
 
     # -------------------------
@@ -114,17 +115,12 @@ class CustomEnvironment(ParallelEnv):
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
         return float(np.linalg.norm(prisoner_pos - self.escape_pos))  # L2
 
-    # -------------------------
-    # PettingZoo API
-    # -------------------------
-    def reset(self, seed=None, options=None):
-        self.agents = copy(self.possible_agents)
-        self.timestep = 0
-
-        # Başlangıç state
+    def _sample_initial_state(self):
+        # Prisoner fixed start
         self.agents_obj = {
             "prisoner": {"role": "prisoner", "pos": np.array([0, 0], dtype=np.int32)}
         }
+        # Guards random
         for i in range(self.num_guards):
             gid = f"guard_{i}"
             self.agents_obj[gid] = {
@@ -134,18 +130,45 @@ class CustomEnvironment(ParallelEnv):
                     dtype=np.int32,
                 ),
             }
-
+        # Escape random
         self.escape_pos = np.array(
             [random.randint(0, self.grid_size - 1), random.randint(0, self.grid_size - 1)],
             dtype=np.int32,
         )
+
+    # -------------------------
+    # PettingZoo API
+    # -------------------------
+    def reset(self, seed=None, options=None):
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+
+        self.agents = copy(self.possible_agents)
+        self.timestep = 0
+
+        # Başlangıç state (instant terminal’i azaltmak için dene-üret)
+        for _ in range(200):
+            self._sample_initial_state()
+            prisoner_pos = self.agents_obj["prisoner"]["pos"]
+
+            # prisoner guard’a çok yakın başlama
+            too_close_guard = any(
+                self._chebyshev_dist(prisoner_pos, self.agents_obj[f"guard_{i}"]["pos"]) <= 1
+                for i in range(self.num_guards)
+            )
+            # prisoner escape’e çok yakın başlama
+            too_close_escape = (self._chebyshev_dist(prisoner_pos, self.escape_pos) <= 1)
+
+            if (not too_close_guard) and (not too_close_escape):
+                break
 
         # Shaping baseline
         self._prev_total_guard_dist = self._total_guard_distance_l2()
         self._prev_escape_dist = self._escape_distance_l2()
 
         observations = {a: self._get_observation(a) for a in self.agents}
-        infos = {a: {} for a in self.agents}
+        infos = {a: {"episode_outcome": "running"} for a in self.agents}
 
         if self.render_mode in ["human", "rgb_array"]:
             self.render()
@@ -157,13 +180,14 @@ class CustomEnvironment(ParallelEnv):
         actions: dict { "guard_0": int, "guard_1": int, ... }
         prisoner action env içinde heuristic olarak üretilir.
         """
+        # 1) timestep
         self.timestep += 1
 
-        # 1) Prisoner move (2x)
+        # 2) Prisoner move (2x)  ✅ senin hedefin buydu
         prisoner_action = self._get_prisoner_action()
-        self._apply_move(self.agents_obj["prisoner"]["pos"], prisoner_action, move_count=1)
+        self._apply_move(self.agents_obj["prisoner"]["pos"], prisoner_action, move_count=2)
 
-        # 2) Guards move (1x)
+        # 3) Guards move (1x)
         for i in range(self.num_guards):
             gid = f"guard_{i}"
 
@@ -171,58 +195,53 @@ class CustomEnvironment(ParallelEnv):
             if gid in actions:
                 act = int(actions[gid])
             else:
-                # güvenli fallback: hareket etmesin veya rastgele seçsin
-                # act = 0  # sabit (ör: sol)
-                act = self.action_space(gid).sample()  # ✅ genelde en sorunsuz
+                act = self.action_space(gid).sample()
 
             self._apply_move(self.agents_obj[gid]["pos"], act, move_count=1)
 
-        # 3) Terminal checks
+        # 4) Terminal checks
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
 
-        captured = False
-        for i in range(self.num_guards):
-            gpos = self.agents_obj[f"guard_{i}"]["pos"]
-            if self._chebyshev_dist(prisoner_pos, gpos) <= 1:
-                captured = True
-                break
-
+        captured = any(
+            self._chebyshev_dist(prisoner_pos, self.agents_obj[f"guard_{i}"]["pos"]) <= 1
+            for i in range(self.num_guards)
+        )
         escaped = (self._chebyshev_dist(prisoner_pos, self.escape_pos) <= 1)
 
-        # 4) Build dict outputs
+        # 5) Outputs
         terminations = {a: False for a in self.agents}
         truncations = {a: False for a in self.agents}
         rewards = {a: 0.0 for a in self.agents}
         infos = {a: {} for a in self.agents}
 
-        # 5) Reward logic
+        # 6) Reward logic
         if captured:
             for a in rewards:
                 rewards[a] = 1.0
                 terminations[a] = True
+
+            outcome = "captured"
 
         elif escaped:
             for a in rewards:
                 rewards[a] = -1.0
                 terminations[a] = True
 
-        else:
-            # --- Dense shaping part ---
+            outcome = "escaped"
 
+        else:
             # (A) Guards approach shaping: reward if total guard distance decreases
             total_guard_dist = self._total_guard_distance_l2()
             dist_delta = (self._prev_total_guard_dist - total_guard_dist)
             self._prev_total_guard_dist = total_guard_dist
 
-            # normalize (rough scale)
             max_ref = float(self.grid_size * self.num_guards * 1.5)
             approach_reward = float(dist_delta) / max(1.0, max_ref)
 
             # (B) Escape-progress penalty: prisoner escape'e yaklaşıyorsa ceza
             escape_dist = self._escape_distance_l2()
-
-            # normalize progress into [0,1]
             max_escape_dist = float(np.sqrt(2) * (self.grid_size - 1))
+
             escape_progress = (max_escape_dist - escape_dist) / max(1.0, max_escape_dist)
             escape_progress = float(np.clip(escape_progress, 0.0, 1.0))
 
@@ -236,18 +255,25 @@ class CustomEnvironment(ParallelEnv):
             for a in rewards:
                 rewards[a] = float(shaped_total)
 
-        # 6) Truncation (time limit)
+            outcome = "running"
+
+        # 7) Truncation (time limit)
         if self.timestep >= self.max_steps and not any(terminations.values()):
             truncations = {a: True for a in self.agents}
+            outcome = "timeout"
 
-        # 7) Observations
+        # 8) Observations
         observations = {a: self._get_observation(a) for a in self.agents}
 
-        # 8) Episode end
+        # 9) infos outcome (callback bunu okuyacak)
+        for a in infos:
+            infos[a]["episode_outcome"] = outcome
+
+        # 10) Episode end
         if any(terminations.values()) or all(truncations.values()):
             self.agents = []
 
-        # 9) Render
+        # 11) Render
         if self.render_mode in ["human", "rgb_array"]:
             self.render()
 
@@ -267,7 +293,6 @@ class CustomEnvironment(ParallelEnv):
         return Box(low=0.0, high=1.0, shape=(dim,), dtype=np.float32)
 
     def _get_observation(self, agent):
-        # agent = "guard_k"
         k = int(agent.split("_")[1])
 
         my_pos = self.agents_obj[agent]["pos"].astype(np.float32)
@@ -296,7 +321,7 @@ class CustomEnvironment(ParallelEnv):
         return obs
 
     # -------------------------
-    # Render (same logic as you sent)
+    # Render (SENİN KODUN - DEĞİŞMEDİ)
     # -------------------------
     def render(self):
         if self.render_mode is None:
