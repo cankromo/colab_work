@@ -1,48 +1,8 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
 
-# C extensions
-*.so
+.ipynb_checkpoints/
 
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-
-# Virtual Environments
-.venv/
+.env
 venv/
-env/
-
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints
-
-# IDE / Editor specific
-.idea/
-.vscode/
-
-# OS-specific
-.DS_Store
-
-# Log files
-*.log
-
-# --- Project-specific ignores ---
-
-# Directories for results
-models/
-videos/
-results/
-
-# Trained models (often large)
-*.zip
-
-# Generated videos
-*.mp4
-
-# Tensorboard logs
-runs/
-tb_logs/

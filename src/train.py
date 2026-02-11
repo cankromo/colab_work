@@ -54,7 +54,7 @@ if __name__ == "__main__":
     p.add_argument("--grid_size", type=int, default=10)
     p.add_argument("--num_guards", type=int, default=2)
     p.add_argument("--max_steps", type=int, default=100)
-    p.add_argument("--timesteps", type=int, default=200_000)
+    p.add_argument("--timesteps", type=int, default=300_000)
     p.add_argument("--num_vec_envs", type=int, default=4)
     p.add_argument("--num_cpus", type=int, default=1)
     p.add_argument("--save_path", type=str, default="models/ppo_guards.zip")
