@@ -36,9 +36,9 @@ class CustomEnvironment(ParallelEnv):
         prisoner_use_heuristic=True,
         # Reward shaping weights
         guard_escape_penalty_lambda=0.05,
-        guard_time_penalty=0.01,
+        guard_time_penalty=None,
         prisoner_guard_penalty_lambda=0.05,
-        prisoner_time_penalty=0.01,
+        prisoner_time_penalty=None,
     ):
         self.render_mode = render_mode
         self.grid_size = int(grid_size)
@@ -51,9 +51,17 @@ class CustomEnvironment(ParallelEnv):
         self.prisoner_use_heuristic = prisoner_use_heuristic
 
         self.guard_escape_penalty_lambda = float(guard_escape_penalty_lambda)
-        self.guard_time_penalty = float(guard_time_penalty)
         self.prisoner_guard_penalty_lambda = float(prisoner_guard_penalty_lambda)
-        self.prisoner_time_penalty = float(prisoner_time_penalty)
+        # Keep per-episode time penalty bounded across different max_steps.
+        # With this scaling, timeout contributes at most ~0.5 penalty per episode.
+        if guard_time_penalty is None:
+            self.guard_time_penalty = 0.5 / max(1, self.max_steps)
+        else:
+            self.guard_time_penalty = float(guard_time_penalty)
+        if prisoner_time_penalty is None:
+            self.prisoner_time_penalty = 0.5 / max(1, self.max_steps)
+        else:
+            self.prisoner_time_penalty = float(prisoner_time_penalty)
 
         # dynamic agents list based on training_side
         if self.training_side == "guards":

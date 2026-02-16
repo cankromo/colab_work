@@ -23,6 +23,8 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--log_dir", type=str, default="logs")
     p.add_argument("--run_name", type=str, default="guards")
+    p.add_argument("--guard_time_penalty", type=float, default=None)
+    p.add_argument("--prisoner_time_penalty", type=float, default=None)
 
     args = p.parse_args()
 
@@ -32,6 +34,8 @@ def main():
         max_steps=args.max_steps,
         training_side="guards",
         prisoner_use_heuristic=True,
+        guard_time_penalty=args.guard_time_penalty,
+        prisoner_time_penalty=args.prisoner_time_penalty,
         render_mode=None,
         seed=args.seed,
     )

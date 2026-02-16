@@ -9,6 +9,24 @@ def run_cmd(cmd, env=None, cwd=None):
     subprocess.run(cmd, check=True, env=env, cwd=cwd)
 
 
+EXPECTED_PLOTS = [
+    "train_reward_guards.png",
+    "train_reward_prisoner.png",
+    "train_loss_guards.png",
+    "train_loss_prisoner.png",
+    "eval_10k_returns.png",
+    "eval_10k_winrate.png",
+    "eval_10k_outcomes.png",
+    "eval_10k_episode_length.png",
+    "train_reward_guards_smoothed.png",
+    "train_reward_prisoner_smoothed.png",
+    "ppo_diagnostics_guards.png",
+    "ppo_diagnostics_prisoner.png",
+    "train_eval_link_guards.png",
+    "train_eval_link_prisoner.png",
+]
+
+
 def auto_params_for_grid(grid_size):
     # Tuned for large-grid runs so evaluation is not dominated by timeouts.
     if grid_size <= 100:
@@ -21,11 +39,13 @@ def auto_params_for_grid(grid_size):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--grid_sizes", type=str, default="100,500,1000")
-    p.add_argument("--base_out", type=str, default="results/grids")
+    p.add_argument("--base_out", type=str, default="results/grids_scaled")
     p.add_argument("--timesteps", type=int, default=200_000)
     p.add_argument("--episodes", type=int, default=10_000)
     p.add_argument("--num_guards", type=int, default=2)
     p.add_argument("--max_steps", type=int, default=100)
+    p.add_argument("--guard_time_penalty", type=float, default=None)
+    p.add_argument("--prisoner_time_penalty", type=float, default=None)
     p.add_argument("--num_vec_envs", type=int, default=4)
     p.add_argument("--num_cpus", type=int, default=1)
     p.add_argument("--seed", type=int, default=0)
@@ -77,64 +97,74 @@ def main():
         os.makedirs(grid_dir, exist_ok=True)
 
         if not args.skip_train:
+            guard_train_cmd = [
+                sys.executable,
+                "-m",
+                "src.train_guards",
+                "--grid_size",
+                str(gs),
+                "--num_guards",
+                str(args.num_guards),
+                "--max_steps",
+                str(max_steps),
+                "--timesteps",
+                str(timesteps),
+                "--num_vec_envs",
+                str(args.num_vec_envs),
+                "--num_cpus",
+                str(args.num_cpus),
+                "--seed",
+                str(args.seed),
+                "--save_path",
+                guard_model,
+                "--log_dir",
+                log_dir,
+                "--run_name",
+                "guards",
+            ]
+            if args.guard_time_penalty is not None:
+                guard_train_cmd += ["--guard_time_penalty", str(args.guard_time_penalty)]
+            if args.prisoner_time_penalty is not None:
+                guard_train_cmd += ["--prisoner_time_penalty", str(args.prisoner_time_penalty)]
             run_cmd(
-                [
-                    sys.executable,
-                    "-m",
-                    "src.train_guards",
-                    "--grid_size",
-                    str(gs),
-                    "--num_guards",
-                    str(args.num_guards),
-                    "--max_steps",
-                    str(max_steps),
-                    "--timesteps",
-                    str(timesteps),
-                    "--num_vec_envs",
-                    str(args.num_vec_envs),
-                    "--num_cpus",
-                    str(args.num_cpus),
-                    "--seed",
-                    str(args.seed),
-                    "--save_path",
-                    guard_model,
-                    "--log_dir",
-                    log_dir,
-                    "--run_name",
-                    "guards",
-                ],
+                guard_train_cmd,
                 env=env_base,
                 cwd=project_root,
             )
 
+            prisoner_train_cmd = [
+                sys.executable,
+                "-m",
+                "src.train_prisoner",
+                "--grid_size",
+                str(gs),
+                "--num_guards",
+                str(args.num_guards),
+                "--max_steps",
+                str(max_steps),
+                "--timesteps",
+                str(timesteps),
+                "--num_vec_envs",
+                str(args.num_vec_envs),
+                "--num_cpus",
+                str(args.num_cpus),
+                "--seed",
+                str(args.seed),
+                "--guard_model_path",
+                guard_model,
+                "--save_path",
+                prisoner_model,
+                "--log_dir",
+                log_dir,
+                "--run_name",
+                "prisoner",
+            ]
+            if args.guard_time_penalty is not None:
+                prisoner_train_cmd += ["--guard_time_penalty", str(args.guard_time_penalty)]
+            if args.prisoner_time_penalty is not None:
+                prisoner_train_cmd += ["--prisoner_time_penalty", str(args.prisoner_time_penalty)]
             run_cmd(
-                [
-                    sys.executable,
-                    "-m",
-                    "src.train_prisoner",
-                    "--grid_size",
-                    str(gs),
-                    "--num_guards",
-                    str(args.num_guards),
-                    "--max_steps",
-                    str(max_steps),
-                    "--timesteps",
-                    str(timesteps),
-                    "--num_vec_envs",
-                    str(args.num_vec_envs),
-                    "--num_cpus",
-                    str(args.num_cpus),
-                    "--seed",
-                    str(args.seed),
-                    "--guard_model_path",
-                    guard_model,
-                    "--save_path",
-                    prisoner_model,
-                    "--log_dir",
-                    log_dir,
-                    "--run_name",
-                    "prisoner",
-                ],
+                prisoner_train_cmd,
                 env=env_base,
                 cwd=project_root,
             )
@@ -188,6 +218,16 @@ def main():
                 env=env,
                 cwd=project_root,
             )
+            missing = []
+            for name in EXPECTED_PLOTS:
+                plot_path = os.path.join(project_root, plot_dir, name)
+                if not os.path.exists(plot_path):
+                    missing.append(plot_path)
+            if missing:
+                print("Missing plots:")
+                for mp in missing:
+                    print(" -", mp)
+                raise RuntimeError(f"Plot generation incomplete for grid_size={gs}")
 
         print(f"Done grid_size={gs} -> {grid_dir}")
 
