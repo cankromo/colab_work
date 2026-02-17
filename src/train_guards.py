@@ -26,6 +26,9 @@ def main():
     p.add_argument("--reward_mode", type=str, default="legacy", choices=["legacy", "dynamic"])
     p.add_argument("--guard_time_penalty", type=float, default=None)
     p.add_argument("--prisoner_time_penalty", type=float, default=None)
+    p.add_argument("--time_pressure_lambda", type=float, default=1.0)
+    p.add_argument("--guard_timeout_penalty", type=float, default=None)
+    p.add_argument("--prisoner_timeout_penalty", type=float, default=None)
 
     args = p.parse_args()
 
@@ -38,6 +41,9 @@ def main():
         reward_mode=args.reward_mode,
         guard_time_penalty=args.guard_time_penalty,
         prisoner_time_penalty=args.prisoner_time_penalty,
+        time_pressure_lambda=args.time_pressure_lambda,
+        guard_timeout_penalty=args.guard_timeout_penalty,
+        prisoner_timeout_penalty=args.prisoner_timeout_penalty,
         render_mode=None,
         seed=args.seed,
     )

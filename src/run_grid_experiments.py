@@ -47,6 +47,9 @@ def main():
     p.add_argument("--reward_mode", type=str, default="legacy", choices=["legacy", "dynamic"])
     p.add_argument("--guard_time_penalty", type=float, default=None)
     p.add_argument("--prisoner_time_penalty", type=float, default=None)
+    p.add_argument("--time_pressure_lambda", type=float, default=1.0)
+    p.add_argument("--guard_timeout_penalty", type=float, default=None)
+    p.add_argument("--prisoner_timeout_penalty", type=float, default=None)
     p.add_argument("--num_vec_envs", type=int, default=4)
     p.add_argument("--num_cpus", type=int, default=1)
     p.add_argument("--seed", type=int, default=0)
@@ -129,6 +132,11 @@ def main():
                 guard_train_cmd += ["--guard_time_penalty", str(args.guard_time_penalty)]
             if args.prisoner_time_penalty is not None:
                 guard_train_cmd += ["--prisoner_time_penalty", str(args.prisoner_time_penalty)]
+            guard_train_cmd += ["--time_pressure_lambda", str(args.time_pressure_lambda)]
+            if args.guard_timeout_penalty is not None:
+                guard_train_cmd += ["--guard_timeout_penalty", str(args.guard_timeout_penalty)]
+            if args.prisoner_timeout_penalty is not None:
+                guard_train_cmd += ["--prisoner_timeout_penalty", str(args.prisoner_timeout_penalty)]
             run_cmd(
                 guard_train_cmd,
                 env=env_base,
@@ -168,6 +176,11 @@ def main():
                 prisoner_train_cmd += ["--guard_time_penalty", str(args.guard_time_penalty)]
             if args.prisoner_time_penalty is not None:
                 prisoner_train_cmd += ["--prisoner_time_penalty", str(args.prisoner_time_penalty)]
+            prisoner_train_cmd += ["--time_pressure_lambda", str(args.time_pressure_lambda)]
+            if args.guard_timeout_penalty is not None:
+                prisoner_train_cmd += ["--guard_timeout_penalty", str(args.guard_timeout_penalty)]
+            if args.prisoner_timeout_penalty is not None:
+                prisoner_train_cmd += ["--prisoner_timeout_penalty", str(args.prisoner_timeout_penalty)]
             run_cmd(
                 prisoner_train_cmd,
                 env=env_base,
@@ -198,7 +211,12 @@ def main():
                     prisoner_model,
                     "--out_csv",
                     eval_csv,
-                ],
+                ]
+                + (["--guard_time_penalty", str(args.guard_time_penalty)] if args.guard_time_penalty is not None else [])
+                + (["--prisoner_time_penalty", str(args.prisoner_time_penalty)] if args.prisoner_time_penalty is not None else [])
+                + ["--time_pressure_lambda", str(args.time_pressure_lambda)]
+                + (["--guard_timeout_penalty", str(args.guard_timeout_penalty)] if args.guard_timeout_penalty is not None else [])
+                + (["--prisoner_timeout_penalty", str(args.prisoner_timeout_penalty)] if args.prisoner_timeout_penalty is not None else []),
                 env=env_base,
                 cwd=project_root,
             )

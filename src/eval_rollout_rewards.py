@@ -17,6 +17,11 @@ def main():
     p.add_argument("--max_steps", type=int, default=100)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--reward_mode", type=str, default="legacy", choices=["legacy", "dynamic"])
+    p.add_argument("--guard_time_penalty", type=float, default=None)
+    p.add_argument("--prisoner_time_penalty", type=float, default=None)
+    p.add_argument("--time_pressure_lambda", type=float, default=1.0)
+    p.add_argument("--guard_timeout_penalty", type=float, default=None)
+    p.add_argument("--prisoner_timeout_penalty", type=float, default=None)
 
     p.add_argument("--guard_model_path", type=str, default="models/guard_model.zip")
     p.add_argument("--prisoner_model_path", type=str, default="models/prisoner_model.zip")
@@ -43,6 +48,11 @@ def main():
                 max_steps=args.max_steps,
                 training_side="play",
                 reward_mode=args.reward_mode,
+                guard_time_penalty=args.guard_time_penalty,
+                prisoner_time_penalty=args.prisoner_time_penalty,
+                time_pressure_lambda=args.time_pressure_lambda,
+                guard_timeout_penalty=args.guard_timeout_penalty,
+                prisoner_timeout_penalty=args.prisoner_timeout_penalty,
                 seed=int(rng.integers(0, 2**31 - 1)),
             )
             obs, infos = env.reset()

@@ -40,6 +40,9 @@ class CustomEnvironment(ParallelEnv):
         guard_time_penalty=None,
         prisoner_guard_penalty_lambda=0.05,
         prisoner_time_penalty=None,
+        time_pressure_lambda=1.0,
+        guard_timeout_penalty=None,
+        prisoner_timeout_penalty=None,
     ):
         self.render_mode = render_mode
         self.grid_size = int(grid_size)
@@ -56,16 +59,27 @@ class CustomEnvironment(ParallelEnv):
 
         self.guard_escape_penalty_lambda = float(guard_escape_penalty_lambda)
         self.prisoner_guard_penalty_lambda = float(prisoner_guard_penalty_lambda)
+        self.time_pressure_lambda = float(time_pressure_lambda)
         # Keep per-episode time penalty bounded across different max_steps.
-        # With this scaling, timeout contributes at most ~0.5 penalty per episode.
+        # With pressure multiplier, this creates stronger urgency near episode end.
         if guard_time_penalty is None:
-            self.guard_time_penalty = 0.5 / max(1, self.max_steps)
+            self.guard_time_penalty = 1.0 / max(1, self.max_steps)
         else:
             self.guard_time_penalty = float(guard_time_penalty)
         if prisoner_time_penalty is None:
-            self.prisoner_time_penalty = 0.5 / max(1, self.max_steps)
+            self.prisoner_time_penalty = 1.0 / max(1, self.max_steps)
         else:
             self.prisoner_time_penalty = float(prisoner_time_penalty)
+
+        # Penalize unresolved episodes explicitly during training.
+        if guard_timeout_penalty is None:
+            self.guard_timeout_penalty = 1.0 if self.training_side == "guards" else 0.0
+        else:
+            self.guard_timeout_penalty = float(guard_timeout_penalty)
+        if prisoner_timeout_penalty is None:
+            self.prisoner_timeout_penalty = 1.0 if self.training_side == "prisoner" else 0.0
+        else:
+            self.prisoner_timeout_penalty = float(prisoner_timeout_penalty)
 
         # dynamic agents list based on training_side
         if self.training_side == "guards":
@@ -151,6 +165,10 @@ class CustomEnvironment(ParallelEnv):
             return 0.0
         ratio = (prev_value - float(curr_value)) / prev_value
         return float(np.clip(ratio, -1.0, 1.0))
+
+    def _time_pressure_multiplier(self) -> float:
+        frac = float(self.timestep) / max(1.0, float(self.max_steps))
+        return 1.0 + self.time_pressure_lambda * float(np.clip(frac, 0.0, 1.0))
 
     # -------------------------
     # Observations (A)
@@ -395,7 +413,7 @@ class CustomEnvironment(ParallelEnv):
                 self._prev_total_guard_dist = total_guard_dist
                 self._prev_escape_dist = esc_dist
 
-                shaped = approach_reward + escape_penalty - self.guard_time_penalty
+                shaped = approach_reward + escape_penalty - (self.guard_time_penalty * self._time_pressure_multiplier())
                 for a in rewards:
                     rewards[a] = float(shaped)
 
@@ -409,7 +427,7 @@ class CustomEnvironment(ParallelEnv):
                     # Positive when prisoner increases separation from guards.
                     separation_reward = -self._relative_progress(self._prev_prisoner_guard_dist, gdist)
                     guard_term = self.prisoner_guard_penalty_lambda * separation_reward
-                    shaped = progress_reward + guard_term - self.prisoner_time_penalty
+                    shaped = progress_reward + guard_term - (self.prisoner_time_penalty * self._time_pressure_multiplier())
                 else:
                     # Legacy shaping.
                     delta = self._prev_prisoner_escape_dist - esc_dist
@@ -420,7 +438,7 @@ class CustomEnvironment(ParallelEnv):
                     closeness = (max_g - gdist) / max(1.0, max_g)  # 0 far -> 1 close
                     closeness = float(np.clip(closeness, 0.0, 1.0))
                     guard_penalty = -self.prisoner_guard_penalty_lambda * closeness
-                    shaped = progress_reward + guard_penalty - self.prisoner_time_penalty
+                    shaped = progress_reward + guard_penalty - (self.prisoner_time_penalty * self._time_pressure_multiplier())
 
                 self._prev_prisoner_escape_dist = esc_dist
                 self._prev_prisoner_guard_dist = gdist
@@ -430,6 +448,17 @@ class CustomEnvironment(ParallelEnv):
         if self.timestep >= self.max_steps and not any(terminations.values()):
             truncations = {a: True for a in self.agents}
             outcome = "timeout"
+            if self.training_side == "guards":
+                for a in rewards:
+                    rewards[a] = float(rewards[a] - self.guard_timeout_penalty)
+            elif self.training_side == "prisoner":
+                rewards["prisoner"] = float(rewards["prisoner"] - self.prisoner_timeout_penalty)
+            else:
+                # Optional penalties in play mode (defaults are 0.0 for compatibility).
+                rewards["prisoner"] = float(rewards.get("prisoner", 0.0) - self.prisoner_timeout_penalty)
+                for i in range(self.num_guards):
+                    gid = f"guard_{i}"
+                    rewards[gid] = float(rewards.get(gid, 0.0) - self.guard_timeout_penalty)
 
         observations = {a: self._get_observation(a) for a in self.agents}
         for a in infos:
