@@ -1,60 +1,170 @@
-# Project Overview
+# Guards vs Prisoner RL
 
-This project appears to be a machine learning or reinforcement learning project, likely involving agents (guards and prisoners) and grid environments, given the file structure.
+Multi-agent reinforcement learning project using a grid-world pursuit/escape setting:
+- Guards try to capture the prisoner.
+- Prisoner tries to reach the escape cell.
 
-Key components include:
-- `src/`: Source code for the project, including environment definitions, training scripts, evaluation metrics, and utilities. 
-- `notebooks/`: Jupyter notebooks for experiments and analysis (e.g., `can.ipynb`).
-- `eval/`: Contains evaluation results, such as `rollout_returns.csv`.
-- `plots/`: Stores various plots and visualizations generated during training and evaluation (e.g., episode length, outcomes, returns, loss, rewards, PPO diagnostics).
-- `results/`: Contains trained models and experiment logs, organized by `exp` (experiment) and `grids` (grid environments).
-  - `exp1`, `exp2`, `exp3`: Different experiment runs, each  containing `model.zip`, `guard_model.zip`, `prisoner_model.zip`, and log files. Those are for low grid size training phase while exp1 contains one model (only for guards), exp2 contains 2 model (guard, prisoner) exp3 contains models plus it's parametrs during trainings and configrations.
-  - `grids` (contains models and it'training process with 100 grid size, but it became nonsignificant due to bad designed reward), `grids_scaled`(this is another try with dynamic reward logic, we will try 100, 500 and 1000 grid here): Results specifically related to grid environments, further organized by `grid_100` which contains evaluation data(returns), models,logs(guard and prisoner each contains training process output's), and play samples (e.g., `play_both_ep1.mp4`).
-- `requirements.txt`: Specifies the Python dependencies for the project When statring, dowland them all.
+The codebase supports training, evaluation, plotting, and grid-size experiment sweeps with both legacy and dynamic reward shaping.
 
-## Directory Structure
+## Tech Stack
 
-- `eval/`
-  - `rollout_returns.csv`: Contains data related to evaluation rollouts.
-- `notebooks/`
-  - `can.ipynb`: A Jupyter notebook for interactive development or analysis.
-- `plots/`
-  - Various `.png` files for visualizing training and evaluation metrics.
-- `results/`
-  - `exp1/`, `exp2/`, `exp3/`: Experiment-specific results.
-  - `grids/`, `grids_scaled/`: Grid environment-specific results.
-    - Contains models (`guard_model.zip`, `prisoner_model.zip`), logs, and visual outputs.
-- `src/`
-  - `callbacks_metrics.py`, `callbacks.py`: Callbacks for training.
-  - `compare_models.py`: Script for comparing different models.
-  - `custom_environment.py`: Definition of the custom environment.
-  - `eval_rollout_rewards.py`: Script for evaluating rollout rewards.
-  - `__init__.py`, `__pycache__/`: Python package structure.
-  - `play_both.py`: Script for playing both agents.
-  - `plot_metrics.py`: Utilities for plotting metrics.
-  - `run_grid_experiments.py`: Script to run grid experiments.
-  - `train_guards.py`, `train_prisoner.py`: Scripts for training guard and prisoner agents.
-- `requirements.txt`: Project dependencies.
+- Python
+- PettingZoo (parallel environment)
+- SuperSuit (vectorization wrappers)
+- Stable-Baselines3 PPO
+- NumPy
+- Matplotlib/Pandas (plotting)
+- Pygame + ImageIO (render/video)
 
-## Getting Started
+Install dependencies:
 
-To set up the project locally:
+```bash
+pip install -r requirements.txt
+```
 
-1.  **Clone the repository** (if applicable).
-2.  **Install dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  **Run experiments or analysis**:
-    - Explore the notebooks in `notebooks/`.
-    - Run training scripts from `src/` (e.g., `python src/train_guards.py`).
-    - Review evaluation results in `eval/` and `results/`.
-    - View generated plots in `plots/`.
+## Repository Layout
 
-## Authors
+- `src/custom_environment.py`: Core PettingZoo environment and reward logic.
+- `src/train_guards.py`: Train guard policy (prisoner controlled by heuristic).
+- `src/train_prisoner.py`: Train prisoner policy (guards controlled by fixed guard model).
+- `src/eval_rollout_rewards.py`: Evaluate trained guard/prisoner models and export rollout CSV.
+- `src/plot_metrics.py`: Generate training/eval plots from logs and evaluation CSV.
+- `src/run_grid_experiments.py`: End-to-end pipeline for multiple grid sizes.
+- `src/play_both.py`: Run both trained agents and save gameplay MP4.
+- `src/compare_models.py`: Outcome-level benchmark (captured/escaped/timeout rates).
+- `results/`, `plots/`, `eval/`: Experiment artifacts (committed in this repository).
 
-[Your Name/Team Name]
+## Reward Modes
 
-## License
+`CustomEnvironment` supports:
 
-[Specify License, e.g., MIT, Apache 2.0]
+- `legacy` (default): existing shaping behavior.
+- `dynamic`: relative step-progress shaping to reduce scale bias on large grids.
+
+Available via `--reward_mode` in:
+- `src/train_guards.py`
+- `src/train_prisoner.py`
+- `src/eval_rollout_rewards.py`
+- `src/run_grid_experiments.py`
+- `src/play_both.py`
+- `src/compare_models.py`
+
+## Quick Start (Single Grid)
+
+Run commands from repository root (`/content/colab_work`) with module mode (`python -m ...`).
+
+1. Train guards:
+
+```bash
+python -m src.train_guards \
+  --grid_size 100 \
+  --num_guards 2 \
+  --max_steps 400 \
+  --timesteps 400000 \
+  --reward_mode dynamic \
+  --save_path results/manual/guard_model.zip \
+  --log_dir results/manual/log \
+  --run_name guards
+```
+
+2. Train prisoner against trained guard model:
+
+```bash
+python -m src.train_prisoner \
+  --grid_size 100 \
+  --num_guards 2 \
+  --max_steps 400 \
+  --timesteps 400000 \
+  --reward_mode dynamic \
+  --guard_model_path results/manual/guard_model.zip \
+  --save_path results/manual/prisoner_model.zip \
+  --log_dir results/manual/log \
+  --run_name prisoner
+```
+
+3. Evaluate rollouts:
+
+```bash
+python -m src.eval_rollout_rewards \
+  --episodes 5000 \
+  --grid_size 100 \
+  --num_guards 2 \
+  --max_steps 400 \
+  --reward_mode dynamic \
+  --guard_model_path results/manual/guard_model.zip \
+  --prisoner_model_path results/manual/prisoner_model.zip \
+  --out_csv results/manual/eval/rollout_returns.csv
+```
+
+4. Generate plots:
+
+```bash
+python -m src.plot_metrics \
+  --log_dir results/manual/log \
+  --run_guards guards \
+  --run_prisoner prisoner \
+  --eval_csv results/manual/eval/rollout_returns.csv \
+  --plot_dir results/manual/plots
+```
+
+## Grid Sweep Pipeline (100/500/1000)
+
+End-to-end training + evaluation + plots:
+
+```bash
+python -m src.run_grid_experiments \
+  --grid_sizes 100,500,1000 \
+  --base_out results/grids_scaled \
+  --reward_mode dynamic \
+  --auto_scale \
+  --num_guards 2 \
+  --seed 0
+```
+
+Useful flags:
+- `--skip_train`: only eval/plots
+- `--skip_eval`: only training/plots
+- `--skip_plots`: only training/eval
+- `--no-auto_scale`: use manual `--max_steps`, `--timesteps`, `--episodes`
+
+## Play and Compare
+
+Generate gameplay video:
+
+```bash
+python -m src.play_both \
+  --grid_size 100 \
+  --num_guards 2 \
+  --max_steps 400 \
+  --reward_mode dynamic \
+  --guard_model_path results/manual/guard_model.zip \
+  --prisoner_model_path results/manual/prisoner_model.zip \
+  --video_path results/manual/play_samples/play_both.mp4
+```
+
+Compute win/timeout statistics:
+
+```bash
+python -m src.compare_models \
+  --episodes 1000 \
+  --grid_size 100 \
+  --num_guards 2 \
+  --max_steps 400 \
+  --reward_mode dynamic \
+  --guard_model_path results/manual/guard_model.zip \
+  --prisoner_model_path results/manual/prisoner_model.zip
+```
+
+## Output Artifacts
+
+Typical outputs per run:
+- Models: `guard_model.zip`, `prisoner_model.zip`
+- Logs: `progress.csv`, TensorBoard `events.out.tfevents.*`, `episode_returns.csv`
+- Eval: `rollout_returns.csv`
+- Plots: reward/loss/eval diagnostics PNG set
+- Optional: gameplay MP4
+
+## Notes
+
+- Use `python -m src.<script>` instead of `python src/<script>.py` (scripts use package-relative imports).
+- `.gitignore` is currently focused on Python caches, notebook checkpoints, and `.env` variants.
