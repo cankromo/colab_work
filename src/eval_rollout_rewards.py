@@ -16,6 +16,7 @@ def main():
     p.add_argument("--num_guards", type=int, default=2)
     p.add_argument("--max_steps", type=int, default=100)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--reward_mode", type=str, default="legacy", choices=["legacy", "dynamic"])
 
     p.add_argument("--guard_model_path", type=str, default="models/guard_model.zip")
     p.add_argument("--prisoner_model_path", type=str, default="models/prisoner_model.zip")
@@ -41,6 +42,7 @@ def main():
                 num_guards=args.num_guards,
                 max_steps=args.max_steps,
                 training_side="play",
+                reward_mode=args.reward_mode,
                 seed=int(rng.integers(0, 2**31 - 1)),
             )
             obs, infos = env.reset()
