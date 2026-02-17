@@ -3,14 +3,14 @@
 This project appears to be a machine learning or reinforcement learning project, likely involving agents (guards and prisoners) and grid environments, given the file structure.
 
 Key components include:
-- `src/`: Source code for the project, including environment definitions, training scripts, evaluation metrics, and utilities.
+- `src/`: Source code for the project, including environment definitions, training scripts, evaluation metrics, and utilities. 
 - `notebooks/`: Jupyter notebooks for experiments and analysis (e.g., `can.ipynb`).
 - `eval/`: Contains evaluation results, such as `rollout_returns.csv`.
 - `plots/`: Stores various plots and visualizations generated during training and evaluation (e.g., episode length, outcomes, returns, loss, rewards, PPO diagnostics).
 - `results/`: Contains trained models and experiment logs, organized by `exp` (experiment) and `grids` (grid environments).
-  - `exp1`, `exp2`, `exp3`: Different experiment runs, each potentially containing `model.zip`, `guard_model.zip`, `prisoner_model.zip`, and log files.
-  - `grids`, `grids_scaled`: Results specifically related to grid environments, further organized by `grid_100` which contains evaluation data, models, logs, and play samples (e.g., `play_both_ep1.mp4`).
-- `requirements.txt`: Specifies the Python dependencies for the project.
+  - `exp1`, `exp2`, `exp3`: Different experiment runs, each  containing `model.zip`, `guard_model.zip`, `prisoner_model.zip`, and log files. Those are for low grid size training phase while exp1 contains one model (only for guards), exp2 contains 2 model (guard, prisoner) exp3 contains models plus it's parametrs during trainings and configrations.
+  - `grids` (contains models and it'training process with 100 grid size, but it became nonsignificant due to bad designed reward), `grids_scaled`(this is another try with dynamic reward logic, we will try 100, 500 and 1000 grid here): Results specifically related to grid environments, further organized by `grid_100` which contains evaluation data(returns), models,logs(guard and prisoner each contains training process output's), and play samples (e.g., `play_both_ep1.mp4`).
+- `requirements.txt`: Specifies the Python dependencies for the project When statring, dowland them all.
 
 ## Directory Structure
 
