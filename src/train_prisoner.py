@@ -20,6 +20,7 @@ def main():
     p.add_argument("--num_vec_envs", type=int, default=4)
     p.add_argument("--num_cpus", type=int, default=1)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--reward_mode", type=str, default="legacy", choices=["legacy", "dynamic"])
     p.add_argument("--guard_time_penalty", type=float, default=None)
     p.add_argument("--prisoner_time_penalty", type=float, default=None)
 
@@ -36,6 +37,7 @@ def main():
         num_guards=args.num_guards,
         max_steps=args.max_steps,
         training_side="prisoner",
+        reward_mode=args.reward_mode,
         guard_model_path=args.guard_model_path,
         guard_time_penalty=args.guard_time_penalty,
         prisoner_time_penalty=args.prisoner_time_penalty,

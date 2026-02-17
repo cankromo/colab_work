@@ -44,6 +44,7 @@ def main():
     p.add_argument("--episodes", type=int, default=10_000)
     p.add_argument("--num_guards", type=int, default=2)
     p.add_argument("--max_steps", type=int, default=100)
+    p.add_argument("--reward_mode", type=str, default="legacy", choices=["legacy", "dynamic"])
     p.add_argument("--guard_time_penalty", type=float, default=None)
     p.add_argument("--prisoner_time_penalty", type=float, default=None)
     p.add_argument("--num_vec_envs", type=int, default=4)
@@ -107,6 +108,8 @@ def main():
                 str(args.num_guards),
                 "--max_steps",
                 str(max_steps),
+                "--reward_mode",
+                args.reward_mode,
                 "--timesteps",
                 str(timesteps),
                 "--num_vec_envs",
@@ -142,6 +145,8 @@ def main():
                 str(args.num_guards),
                 "--max_steps",
                 str(max_steps),
+                "--reward_mode",
+                args.reward_mode,
                 "--timesteps",
                 str(timesteps),
                 "--num_vec_envs",
@@ -181,6 +186,8 @@ def main():
                     str(args.num_guards),
                     "--max_steps",
                     str(max_steps),
+                    "--reward_mode",
+                    args.reward_mode,
                     "--episodes",
                     str(episodes),
                     "--seed",
