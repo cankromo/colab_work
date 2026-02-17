@@ -35,11 +35,10 @@ class CustomEnvironment(ParallelEnv):
         prisoner_model_path=None,
         prisoner_use_heuristic=True,
         # Reward shaping weights
-        reward_mode="legacy",
         guard_escape_penalty_lambda=0.05,
-        guard_time_penalty=None,
+        guard_time_penalty=0.01,
         prisoner_guard_penalty_lambda=0.05,
-        prisoner_time_penalty=None,
+        prisoner_time_penalty=0.01,
     ):
         self.render_mode = render_mode
         self.grid_size = int(grid_size)
@@ -50,22 +49,11 @@ class CustomEnvironment(ParallelEnv):
         self.guard_model_path = guard_model_path
         self.prisoner_model_path = prisoner_model_path
         self.prisoner_use_heuristic = prisoner_use_heuristic
-        self.reward_mode = str(reward_mode).strip().lower()
-        if self.reward_mode not in {"legacy", "dynamic"}:
-            raise ValueError("reward_mode must be one of: legacy, dynamic")
 
         self.guard_escape_penalty_lambda = float(guard_escape_penalty_lambda)
+        self.guard_time_penalty = float(guard_time_penalty)
         self.prisoner_guard_penalty_lambda = float(prisoner_guard_penalty_lambda)
-        # Keep per-episode time penalty bounded across different max_steps.
-        # With this scaling, timeout contributes at most ~0.5 penalty per episode.
-        if guard_time_penalty is None:
-            self.guard_time_penalty = 0.5 / max(1, self.max_steps)
-        else:
-            self.guard_time_penalty = float(guard_time_penalty)
-        if prisoner_time_penalty is None:
-            self.prisoner_time_penalty = 0.5 / max(1, self.max_steps)
-        else:
-            self.prisoner_time_penalty = float(prisoner_time_penalty)
+        self.prisoner_time_penalty = float(prisoner_time_penalty)
 
         # dynamic agents list based on training_side
         if self.training_side == "guards":
@@ -140,17 +128,6 @@ class CustomEnvironment(ParallelEnv):
     def _escape_distance_l2(self) -> float:
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
         return float(np.linalg.norm(prisoner_pos - self.escape_pos))
-
-    def _relative_progress(self, prev_value: float, curr_value: float) -> float:
-        """
-        Relative step progress bounded to [-1, 1].
-        Positive means current value improved versus previous.
-        """
-        prev_value = float(prev_value)
-        if prev_value <= 1e-8:
-            return 0.0
-        ratio = (prev_value - float(curr_value)) / prev_value
-        return float(np.clip(ratio, -1.0, 1.0))
 
     # -------------------------
     # Observations (A)
@@ -373,56 +350,42 @@ class CustomEnvironment(ParallelEnv):
             outcome = "running"
 
             if self.training_side == "guards":
+                # Guards shaping: encourage decreasing total guard distance
                 total_guard_dist = self._total_guard_distance_l2()
-                esc_dist = self._escape_distance_l2()
-
-                if self.reward_mode == "dynamic":
-                    # Scale by relative per-step progress to reduce grid-size bias.
-                    approach_reward = self._relative_progress(self._prev_total_guard_dist, total_guard_dist)
-                    escape_step_progress = self._relative_progress(self._prev_escape_dist, esc_dist)
-                    escape_penalty = -self.guard_escape_penalty_lambda * escape_step_progress
-                else:
-                    # Legacy shaping.
-                    dist_delta = self._prev_total_guard_dist - total_guard_dist
-                    max_ref = float(self.grid_size * self.num_guards * 1.5)
-                    approach_reward = float(dist_delta) / max(1.0, max_ref)
-
-                    max_esc = float(np.sqrt(2) * (self.grid_size - 1))
-                    escape_progress = (max_esc - esc_dist) / max(1.0, max_esc)
-                    escape_progress = float(np.clip(escape_progress, 0.0, 1.0))
-                    escape_penalty = -self.guard_escape_penalty_lambda * escape_progress
-
+                dist_delta = self._prev_total_guard_dist - total_guard_dist
                 self._prev_total_guard_dist = total_guard_dist
-                self._prev_escape_dist = esc_dist
+
+                max_ref = float(self.grid_size * self.num_guards * 1.5)
+                approach_reward = float(dist_delta) / max(1.0, max_ref)
+
+                # Penalize prisoner approaching escape
+                esc_dist = self._escape_distance_l2()
+                max_esc = float(np.sqrt(2) * (self.grid_size - 1))
+                escape_progress = (max_esc - esc_dist) / max(1.0, max_esc)
+                escape_progress = float(np.clip(escape_progress, 0.0, 1.0))
+                escape_penalty = -self.guard_escape_penalty_lambda * escape_progress
+
                 shaped = approach_reward + escape_penalty - self.guard_time_penalty
                 for a in rewards:
                     rewards[a] = float(shaped)
 
             elif self.training_side == "prisoner":
+                # Prisoner shaping: encourage decreasing escape distance
                 esc_dist = self._escape_distance_l2()
-                gdist = self._total_guard_distance_l2()
-
-                if self.reward_mode == "dynamic":
-                    # Positive when prisoner gets closer to escape this step.
-                    progress_reward = self._relative_progress(self._prev_prisoner_escape_dist, esc_dist)
-                    # Positive when prisoner increases separation from guards.
-                    separation_reward = -self._relative_progress(self._prev_prisoner_guard_dist, gdist)
-                    guard_term = self.prisoner_guard_penalty_lambda * separation_reward
-                    shaped = progress_reward + guard_term - self.prisoner_time_penalty
-                else:
-                    # Legacy shaping.
-                    delta = self._prev_prisoner_escape_dist - esc_dist
-                    max_esc = float(np.sqrt(2) * (self.grid_size - 1))
-                    progress_reward = float(delta) / max(1.0, max_esc)
-
-                    max_g = float(self.grid_size * self.num_guards * 1.5)
-                    closeness = (max_g - gdist) / max(1.0, max_g)  # 0 far -> 1 close
-                    closeness = float(np.clip(closeness, 0.0, 1.0))
-                    guard_penalty = -self.prisoner_guard_penalty_lambda * closeness
-                    shaped = progress_reward + guard_penalty - self.prisoner_time_penalty
-
+                delta = self._prev_prisoner_escape_dist - esc_dist
                 self._prev_prisoner_escape_dist = esc_dist
-                self._prev_prisoner_guard_dist = gdist
+
+                max_esc = float(np.sqrt(2) * (self.grid_size - 1))
+                progress_reward = float(delta) / max(1.0, max_esc)
+
+                # Penalize being close to guards (based on total L2 distance)
+                gdist = self._total_guard_distance_l2()
+                max_g = float(self.grid_size * self.num_guards * 1.5)
+                closeness = (max_g - gdist) / max(1.0, max_g)  # 0 far -> 1 close
+                closeness = float(np.clip(closeness, 0.0, 1.0))
+                guard_penalty = -self.prisoner_guard_penalty_lambda * closeness
+
+                shaped = progress_reward + guard_penalty - self.prisoner_time_penalty
                 rewards["prisoner"] = float(shaped)
 
         # --- truncation

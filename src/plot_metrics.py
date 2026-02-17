@@ -4,14 +4,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-BASE_DIR = os.getenv("PLOT_BASE_DIR", "colab_work")
+BASE_DIR = "colab_work"   # �� önemli
 
 
 def plot_train_rewards(log_dir, run_name, out_path):
     path = os.path.join(BASE_DIR, log_dir, run_name, "episode_returns.csv")
 
     if not os.path.exists(path):
-        print("Not found:", path)
+        print("❌ Not found:", path)
         return
 
     df = pd.read_csv(path)
@@ -34,7 +34,7 @@ def plot_train_loss(log_dir, run_name, out_path):
     path = os.path.join(BASE_DIR, log_dir, run_name, "progress.csv")
 
     if not os.path.exists(path):
-        print("Not found:", path)
+        print("❌ Not found:", path)
         return
 
     df = pd.read_csv(path)
@@ -61,12 +61,90 @@ def plot_eval_rewards(eval_csv, out_path):
     path = os.path.join(BASE_DIR, eval_csv)
 
     if not os.path.exists(path):
-        print("Not found:", path)
+        print("❌ Not found:", path)
         return
 
     df = pd.read_csv(path)
 
     plt.figure()
+    # Returns are often binary (-1/1). Plot a rolling mean to show trend.
+    window = 200
+    rp = df["return_prisoner"].rolling(window=window, min_periods=1).mean()
+    rg = df["return_guards_mean"].rolling(window=window, min_periods=1).mean()
+    plt.plot(df["episode"], rp, label=f"prisoner (roll{window})")
+    plt.plot(df["episode"], rg, label=f"guards (roll{window})")
+
+
+import os
+import argparse
+import pandas as pd
+import matplotlib.pyplot as plt
+
+
+BASE_DIR = "colab_work"   # �� önemli
+
+
+def plot_train_rewards(log_dir, run_name, out_path):
+    path = os.path.join(BASE_DIR, log_dir, run_name, "episode_returns.csv")
+
+    if not os.path.exists(path):
+        print("❌ Not found:", path)
+        return
+
+    df = pd.read_csv(path)
+
+    plt.figure()
+    plt.plot(df["timesteps"], df["ep_return"])
+    plt.xlabel("timesteps")
+    plt.ylabel("episode return")
+    plt.title(f"Train Episode Return - {run_name}")
+
+    full_out = os.path.join(BASE_DIR, out_path)
+    os.makedirs(os.path.dirname(full_out), exist_ok=True)
+    plt.savefig(full_out, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    print("Saved:", full_out)
+
+
+def plot_train_loss(log_dir, run_name, out_path):
+    path = os.path.join(BASE_DIR, log_dir, run_name, "progress.csv")
+
+    if not os.path.exists(path):
+        print("❌ Not found:", path)
+        return
+
+    df = pd.read_csv(path)
+
+    if "train/loss" not in df.columns:
+        print("No train/loss column found in", path)
+        return
+
+    plt.figure()
+    plt.plot(df["time/total_timesteps"], df["train/loss"])
+
+    plt.xlabel("timesteps")
+    plt.ylabel("loss")
+    plt.title(f"Train Loss - {run_name}")
+    full_out = os.path.join(BASE_DIR, out_path)
+    os.makedirs(os.path.dirname(full_out), exist_ok=True)
+    plt.savefig(full_out, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    print("Saved:", full_out)
+
+
+def plot_eval_rewards(eval_csv, out_path):
+    path = os.path.join(BASE_DIR, eval_csv)
+
+    if not os.path.exists(path):
+        print("❌ Not found:", path)
+        return
+
+    df = pd.read_csv(path)
+
+    plt.figure()
+    # Returns are often binary (-1/1). Plot a rolling mean to show trend.
     window = 200
     rp = df["return_prisoner"].rolling(window=window, min_periods=1).mean()
     rg = df["return_guards_mean"].rolling(window=window, min_periods=1).mean()
@@ -89,7 +167,7 @@ def plot_eval_winrate(eval_csv, out_path):
     path = os.path.join(BASE_DIR, eval_csv)
 
     if not os.path.exists(path):
-        print("Not found:", path)
+        print("❌ Not found:", path)
         return
 
     df = pd.read_csv(path)
@@ -98,6 +176,7 @@ def plot_eval_winrate(eval_csv, out_path):
         print("No outcome column found in", path)
         return
 
+    # Win rate based on outcomes. Adjust if your env uses different labels.
     prisoner_win = (df["outcome"] == "escaped").astype(float)
     guards_win = (df["outcome"] == "captured").astype(float)
 
@@ -126,7 +205,7 @@ def plot_eval_outcome_counts(eval_csv, out_path):
     path = os.path.join(BASE_DIR, eval_csv)
 
     if not os.path.exists(path):
-        print("Not found:", path)
+        print("❌ Not found:", path)
         return
 
     df = pd.read_csv(path)
@@ -154,7 +233,7 @@ def plot_eval_episode_length(eval_csv, out_path):
     path = os.path.join(BASE_DIR, eval_csv)
 
     if not os.path.exists(path):
-        print("Not found:", path)
+        print("❌ Not found:", path)
         return
 
     df = pd.read_csv(path)
@@ -184,7 +263,7 @@ def plot_train_rewards_smoothed(log_dir, run_name, out_path):
     path = os.path.join(BASE_DIR, log_dir, run_name, "episode_returns.csv")
 
     if not os.path.exists(path):
-        print("Not found:", path)
+        print("❌ Not found:", path)
         return
 
     df = pd.read_csv(path)
@@ -210,7 +289,7 @@ def plot_ppo_diagnostics(log_dir, run_name, out_path):
     path = os.path.join(BASE_DIR, log_dir, run_name, "progress.csv")
 
     if not os.path.exists(path):
-        print("Not found:", path)
+        print("❌ Not found:", path)
         return
 
     df = pd.read_csv(path)
@@ -260,10 +339,10 @@ def plot_train_eval_link(log_dir, run_name, eval_csv, out_path):
     eval_path = os.path.join(BASE_DIR, eval_csv)
 
     if not os.path.exists(train_path):
-        print("Not found:", train_path)
+        print("❌ Not found:", train_path)
         return
     if not os.path.exists(eval_path):
-        print("Not found:", eval_path)
+        print("❌ Not found:", eval_path)
         return
 
     train_df = pd.read_csv(train_path)
@@ -272,6 +351,7 @@ def plot_train_eval_link(log_dir, run_name, eval_csv, out_path):
     window = 200
     train_rm = train_df["ep_return"].rolling(window=window, min_periods=1).mean()
 
+    # Overall eval win rates (single points at end of training).
     prisoner_win = (eval_df.get("outcome") == "escaped").mean()
     guards_win = (eval_df.get("outcome") == "captured").mean()
 
@@ -292,6 +372,7 @@ def plot_train_eval_link(log_dir, run_name, eval_csv, out_path):
     ax.set_ylabel("train episode return")
     plt.title(f"Train vs Eval Link - {run_name}")
 
+    # Combine legends
     lines, labels = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax.legend(lines + lines2, labels + labels2, loc="best")
@@ -310,28 +391,27 @@ def main():
     p.add_argument("--run_guards", type=str, default="guards")
     p.add_argument("--run_prisoner", type=str, default="prisoner")
     p.add_argument("--eval_csv", type=str, default="eval/rollout_returns.csv")
-    p.add_argument("--plot_dir", type=str, default="plots")
     args = p.parse_args()
 
-    plot_train_rewards(args.log_dir, args.run_guards, os.path.join(args.plot_dir, "train_reward_guards.png"))
-    plot_train_rewards(args.log_dir, args.run_prisoner, os.path.join(args.plot_dir, "train_reward_prisoner.png"))
+    plot_train_rewards(args.log_dir, args.run_guards, "plots/train_reward_guards.png")
+    plot_train_rewards(args.log_dir, args.run_prisoner, "plots/train_reward_prisoner.png")
 
-    plot_train_loss(args.log_dir, args.run_guards, os.path.join(args.plot_dir, "train_loss_guards.png"))
-    plot_train_loss(args.log_dir, args.run_prisoner, os.path.join(args.plot_dir, "train_loss_prisoner.png"))
+    plot_train_loss(args.log_dir, args.run_guards, "plots/train_loss_guards.png")
+    plot_train_loss(args.log_dir, args.run_prisoner, "plots/train_loss_prisoner.png")
 
-    plot_eval_rewards(args.eval_csv, os.path.join(args.plot_dir, "eval_10k_returns.png"))
-    plot_eval_winrate(args.eval_csv, os.path.join(args.plot_dir, "eval_10k_winrate.png"))
-    plot_eval_outcome_counts(args.eval_csv, os.path.join(args.plot_dir, "eval_10k_outcomes.png"))
-    plot_eval_episode_length(args.eval_csv, os.path.join(args.plot_dir, "eval_10k_episode_length.png"))
+    plot_eval_rewards(args.eval_csv, "plots/eval_10k_returns.png")
+    plot_eval_winrate(args.eval_csv, "plots/eval_10k_winrate.png")
+    plot_eval_outcome_counts(args.eval_csv, "plots/eval_10k_outcomes.png")
+    plot_eval_episode_length(args.eval_csv, "plots/eval_10k_episode_length.png")
 
-    plot_train_rewards_smoothed(args.log_dir, args.run_guards, os.path.join(args.plot_dir, "train_reward_guards_smoothed.png"))
-    plot_train_rewards_smoothed(args.log_dir, args.run_prisoner, os.path.join(args.plot_dir, "train_reward_prisoner_smoothed.png"))
+    plot_train_rewards_smoothed(args.log_dir, args.run_guards, "plots/train_reward_guards_smoothed.png")
+    plot_train_rewards_smoothed(args.log_dir, args.run_prisoner, "plots/train_reward_prisoner_smoothed.png")
 
-    plot_ppo_diagnostics(args.log_dir, args.run_guards, os.path.join(args.plot_dir, "ppo_diagnostics_guards.png"))
-    plot_ppo_diagnostics(args.log_dir, args.run_prisoner, os.path.join(args.plot_dir, "ppo_diagnostics_prisoner.png"))
+    plot_ppo_diagnostics(args.log_dir, args.run_guards, "plots/ppo_diagnostics_guards.png")
+    plot_ppo_diagnostics(args.log_dir, args.run_prisoner, "plots/ppo_diagnostics_prisoner.png")
 
-    plot_train_eval_link(args.log_dir, args.run_guards, args.eval_csv, os.path.join(args.plot_dir, "train_eval_link_guards.png"))
-    plot_train_eval_link(args.log_dir, args.run_prisoner, args.eval_csv, os.path.join(args.plot_dir, "train_eval_link_prisoner.png"))
+    plot_train_eval_link(args.log_dir, args.run_guards, args.eval_csv, "plots/train_eval_link_guards.png")
+    plot_train_eval_link(args.log_dir, args.run_prisoner, args.eval_csv, "plots/train_eval_link_prisoner.png")
 
 
 if __name__ == "__main__":
