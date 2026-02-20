@@ -4,7 +4,7 @@ from copy import copy
 
 import numpy as np
 import pygame
-from gymnasium.spaces import Box, Discrete
+from gymnasium.spaces import Box
 from pettingzoo.utils.env import ParallelEnv
 
 
@@ -25,7 +25,7 @@ class CustomEnvironment(ParallelEnv):
     def __init__(
         self,
         render_mode=None,
-        grid_size=10,
+        grid_size=100,
         num_guards=2,
         max_steps=100,
         seed=None,
@@ -34,6 +34,11 @@ class CustomEnvironment(ParallelEnv):
         guard_model_path=None,
         prisoner_model_path=None,
         prisoner_use_heuristic=True,
+        # Continuous world params
+        max_speed=2.0,
+        max_accel=1.0,
+        capture_radius=0.3,
+        escape_radius=0.3,
         # Reward shaping weights
         guard_escape_penalty_lambda=0.05,
         guard_time_penalty=0.01,
@@ -41,7 +46,7 @@ class CustomEnvironment(ParallelEnv):
         prisoner_time_penalty=0.01,
     ):
         self.render_mode = render_mode
-        self.grid_size = int(grid_size)
+        self.grid_size = float(grid_size)
         self.num_guards = int(num_guards)
         self.max_steps = int(max_steps)
         self.training_side = training_side
@@ -49,6 +54,11 @@ class CustomEnvironment(ParallelEnv):
         self.guard_model_path = guard_model_path
         self.prisoner_model_path = prisoner_model_path
         self.prisoner_use_heuristic = prisoner_use_heuristic
+
+        self.max_speed = float(max_speed)
+        self.max_accel = float(max_accel)
+        self.capture_radius = float(capture_radius)
+        self.escape_radius = float(escape_radius)
 
         self.guard_escape_penalty_lambda = float(guard_escape_penalty_lambda)
         self.guard_time_penalty = float(guard_time_penalty)
@@ -69,7 +79,7 @@ class CustomEnvironment(ParallelEnv):
 
         # world state
         self.agents_obj = {}
-        self.escape_pos = np.zeros(2, dtype=np.int32)
+        self.escape_pos = np.zeros(2, dtype=np.float32)
         self.timestep = 0
 
         # shaping baselines
@@ -103,19 +113,24 @@ class CustomEnvironment(ParallelEnv):
     # -------------------------
     # Helpers
     # -------------------------
-    def _chebyshev_dist(self, a: np.ndarray, b: np.ndarray) -> int:
-        return int(np.linalg.norm(a - b, ord=np.inf))
+    def _apply_accel(self, pos: np.ndarray, vel: np.ndarray, accel: np.ndarray) -> None:
+        a = np.array(accel, dtype=np.float32)
+        if a.shape != (2,):
+            a = a.reshape(2,)
+        a = np.clip(a, -1.0, 1.0)
+        # scale to max acceleration and clamp magnitude
+        a = a * self.max_accel
+        a_norm = float(np.linalg.norm(a))
+        if a_norm > self.max_accel and a_norm > 0:
+            a = a * (self.max_accel / a_norm)
 
-    def _apply_move(self, pos: np.ndarray, action: int, move_count: int = 1) -> None:
-        for _ in range(move_count):
-            if action == 0 and pos[0] > 0:
-                pos[0] -= 1
-            elif action == 1 and pos[0] < self.grid_size - 1:
-                pos[0] += 1
-            elif action == 2 and pos[1] > 0:
-                pos[1] -= 1
-            elif action == 3 and pos[1] < self.grid_size - 1:
-                pos[1] += 1
+        vel[:] = vel + a
+        v_norm = float(np.linalg.norm(vel))
+        if v_norm > self.max_speed and v_norm > 0:
+            vel[:] = vel * (self.max_speed / v_norm)
+
+        pos[:] = pos + vel
+        pos[:] = np.clip(pos, 0.0, self.grid_size)
 
     def _total_guard_distance_l2(self) -> float:
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
@@ -132,37 +147,46 @@ class CustomEnvironment(ParallelEnv):
     # -------------------------
     # Observations (A)
     # -------------------------
-    def _norm(self, v: np.ndarray) -> np.ndarray:
-        denom = float(max(1, self.grid_size - 1))
+    def _norm(self, v: np.ndarray, denom: float) -> np.ndarray:
+        denom = float(max(1e-6, denom))
         return v.astype(np.float32) / denom
 
     def _get_guard_obs(self, guard_id: str) -> np.ndarray:
         """A (guards): my_pos + prisoner_pos + other_guards + escape_pos + id_onehot"""
         k = int(guard_id.split("_")[1])
 
-        my_pos = self._norm(self.agents_obj[guard_id]["pos"])
-        prisoner_pos = self._norm(self.agents_obj["prisoner"]["pos"])
-        escape_pos = self._norm(self.escape_pos)
+        my_pos = self._norm(self.agents_obj[guard_id]["pos"], self.grid_size)
+        my_vel = self._norm(self.agents_obj[guard_id]["vel"], self.max_speed)
+        prisoner_pos = self._norm(self.agents_obj["prisoner"]["pos"], self.grid_size)
+        prisoner_vel = self._norm(self.agents_obj["prisoner"]["vel"], self.max_speed)
+        escape_pos = self._norm(self.escape_pos, self.grid_size)
 
         others = []
         for i in range(self.num_guards):
             if i == k:
                 continue
-            others.append(self._norm(self.agents_obj[f"guard_{i}"]["pos"]))
+            others.append(self._norm(self.agents_obj[f"guard_{i}"]["pos"], self.grid_size))
+            others.append(self._norm(self.agents_obj[f"guard_{i}"]["vel"], self.max_speed))
         others = np.concatenate(others) if others else np.array([], dtype=np.float32)
 
         id_onehot = np.zeros(self.num_guards, dtype=np.float32)
         id_onehot[k] = 1.0
 
-        return np.concatenate([my_pos, prisoner_pos, others, escape_pos, id_onehot]).astype(np.float32)
+        return np.concatenate(
+            [my_pos, my_vel, prisoner_pos, prisoner_vel, others, escape_pos, id_onehot]
+        ).astype(np.float32)
 
     def _get_prisoner_obs(self) -> np.ndarray:
         """A (prisoner): prisoner_pos + all_guards_pos + escape_pos"""
-        prisoner_pos = self._norm(self.agents_obj["prisoner"]["pos"])
-        guards = [self._norm(self.agents_obj[f"guard_{i}"]["pos"]) for i in range(self.num_guards)]
+        prisoner_pos = self._norm(self.agents_obj["prisoner"]["pos"], self.grid_size)
+        prisoner_vel = self._norm(self.agents_obj["prisoner"]["vel"], self.max_speed)
+        guards = []
+        for i in range(self.num_guards):
+            guards.append(self._norm(self.agents_obj[f"guard_{i}"]["pos"], self.grid_size))
+            guards.append(self._norm(self.agents_obj[f"guard_{i}"]["vel"], self.max_speed))
         guards = np.concatenate(guards) if guards else np.array([], dtype=np.float32)
-        escape_pos = self._norm(self.escape_pos)
-        return np.concatenate([prisoner_pos, guards, escape_pos]).astype(np.float32)
+        escape_pos = self._norm(self.escape_pos, self.grid_size)
+        return np.concatenate([prisoner_pos, prisoner_vel, guards, escape_pos]).astype(np.float32)
 
     def _get_observation(self, agent: str) -> np.ndarray:
         if agent == "prisoner":
@@ -186,12 +210,12 @@ class CustomEnvironment(ParallelEnv):
             from stable_baselines3 import PPO
             self._prisoner_model = PPO.load(self.prisoner_model_path)
 
-    def _prisoner_heuristic_action(self) -> int:
+    def _prisoner_heuristic_action(self) -> np.ndarray:
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
         escape_pos = self.escape_pos
         guards = [self.agents_obj[f"guard_{i}"]["pos"] for i in range(self.num_guards)]
         if not guards:
-            return random.randint(0, 3)
+            return np.random.uniform(-1.0, 1.0, size=(2,)).astype(np.float32)
 
         distances = [np.linalg.norm(prisoner_pos - g) for g in guards]
         closest_guard = guards[int(np.argmin(distances))]
@@ -200,11 +224,12 @@ class CustomEnvironment(ParallelEnv):
         avoid_vec = prisoner_pos - closest_guard
         final_vec = 2 * escape_vec + avoid_vec
 
-        if abs(final_vec[0]) > abs(final_vec[1]):
-            return 1 if final_vec[0] > 0 else 0
-        return 3 if final_vec[1] > 0 else 2
+        norm = float(np.linalg.norm(final_vec))
+        if norm == 0:
+            return np.random.uniform(-1.0, 1.0, size=(2,)).astype(np.float32)
+        return (final_vec / norm).astype(np.float32)
 
-    def _get_prisoner_action(self) -> int:
+    def _get_prisoner_action(self) -> np.ndarray:
         if self.training_side == "play":
             raise RuntimeError("play mode expects prisoner action from outside")
         if self.prisoner_use_heuristic:
@@ -212,7 +237,7 @@ class CustomEnvironment(ParallelEnv):
         self._lazy_load_prisoner_model()
         obs = self._get_prisoner_obs()
         a, _ = self._prisoner_model.predict(obs, deterministic=True)
-        return int(a)
+        return np.array(a, dtype=np.float32)
 
     def _get_guard_actions_from_model(self) -> dict:
         self._lazy_load_guard_model()
@@ -221,7 +246,7 @@ class CustomEnvironment(ParallelEnv):
             gid = f"guard_{i}"
             obs = self._get_guard_obs(gid)
             a, _ = self._guard_model.predict(obs, deterministic=True)
-            actions[gid] = int(a)
+            actions[gid] = np.array(a, dtype=np.float32)
         return actions
 
     # -------------------------
@@ -237,26 +262,33 @@ class CustomEnvironment(ParallelEnv):
 
         # sample initial state (avoid immediate terminal)
         for _ in range(200):
-            self.agents_obj = {"prisoner": {"role": "prisoner", "pos": np.array([0, 0], dtype=np.int32)}}
+            self.agents_obj = {
+                "prisoner": {
+                    "role": "prisoner",
+                    "pos": np.array([0.0, 0.0], dtype=np.float32),
+                    "vel": np.zeros(2, dtype=np.float32),
+                }
+            }
             for i in range(self.num_guards):
                 self.agents_obj[f"guard_{i}"] = {
                     "role": "guard",
                     "pos": np.array(
-                        [random.randint(1, self.grid_size - 1), random.randint(1, self.grid_size - 1)],
-                        dtype=np.int32,
+                        [random.uniform(1.0, self.grid_size), random.uniform(1.0, self.grid_size)],
+                        dtype=np.float32,
                     ),
+                    "vel": np.zeros(2, dtype=np.float32),
                 }
             self.escape_pos = np.array(
-                [random.randint(0, self.grid_size - 1), random.randint(0, self.grid_size - 1)],
-                dtype=np.int32,
+                [random.uniform(0.0, self.grid_size), random.uniform(0.0, self.grid_size)],
+                dtype=np.float32,
             )
 
             prisoner_pos = self.agents_obj["prisoner"]["pos"]
             too_close_guard = any(
-                self._chebyshev_dist(prisoner_pos, self.agents_obj[f"guard_{i}"]["pos"]) <= 1
+                float(np.linalg.norm(prisoner_pos - self.agents_obj[f"guard_{i}"]["pos"])) <= self.capture_radius
                 for i in range(self.num_guards)
             )
-            too_close_escape = (self._chebyshev_dist(prisoner_pos, self.escape_pos) <= 1)
+            too_close_escape = (float(np.linalg.norm(prisoner_pos - self.escape_pos)) <= self.escape_radius)
 
             if not too_close_guard and not too_close_escape:
                 break
@@ -287,36 +319,48 @@ class CustomEnvironment(ParallelEnv):
             # guards come from outside, prisoner from env policy
             for i in range(self.num_guards):
                 gid = f"guard_{i}"
-                full_actions[gid] = int(actions.get(gid, self.action_space(gid).sample()))
+                full_actions[gid] = np.array(actions.get(gid, self.action_space(gid).sample()), dtype=np.float32)
             full_actions["prisoner"] = self._get_prisoner_action()
 
         elif self.training_side == "prisoner":
             # prisoner from outside, guards from fixed guard model
-            full_actions["prisoner"] = int(actions.get("prisoner", self.action_space("prisoner").sample()))
+            full_actions["prisoner"] = np.array(
+                actions.get("prisoner", self.action_space("prisoner").sample()),
+                dtype=np.float32,
+            )
             full_actions.update(self._get_guard_actions_from_model())
 
         elif self.training_side == "play":
             # both provided
             for i in range(self.num_guards):
                 gid = f"guard_{i}"
-                full_actions[gid] = int(actions.get(gid, self.action_space(gid).sample()))
-            full_actions["prisoner"] = int(actions.get("prisoner", self.action_space("prisoner").sample()))
+                full_actions[gid] = np.array(actions.get(gid, self.action_space(gid).sample()), dtype=np.float32)
+            full_actions["prisoner"] = np.array(
+                actions.get("prisoner", self.action_space("prisoner").sample()),
+                dtype=np.float32,
+            )
 
         # --- apply moves
-        # prisoner moves twice
-        self._apply_move(self.agents_obj["prisoner"]["pos"], full_actions["prisoner"], move_count=2)
-        # guards move once
+        self._apply_accel(
+            self.agents_obj["prisoner"]["pos"],
+            self.agents_obj["prisoner"]["vel"],
+            full_actions["prisoner"],
+        )
         for i in range(self.num_guards):
             gid = f"guard_{i}"
-            self._apply_move(self.agents_obj[gid]["pos"], full_actions[gid], move_count=1)
+            self._apply_accel(
+                self.agents_obj[gid]["pos"],
+                self.agents_obj[gid]["vel"],
+                full_actions[gid],
+            )
 
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
 
         captured = any(
-            self._chebyshev_dist(prisoner_pos, self.agents_obj[f"guard_{i}"]["pos"]) <= 1
+            float(np.linalg.norm(prisoner_pos - self.agents_obj[f"guard_{i}"]["pos"])) <= self.capture_radius
             for i in range(self.num_guards)
         )
-        escaped = (self._chebyshev_dist(prisoner_pos, self.escape_pos) <= 1)
+        escaped = (float(np.linalg.norm(prisoner_pos - self.escape_pos)) <= self.escape_radius)
 
         terminations = {a: False for a in self.agents}
         truncations = {a: False for a in self.agents}
@@ -360,7 +404,7 @@ class CustomEnvironment(ParallelEnv):
 
                 # Penalize prisoner approaching escape
                 esc_dist = self._escape_distance_l2()
-                max_esc = float(np.sqrt(2) * (self.grid_size - 1))
+                max_esc = float(np.sqrt(2) * (self.grid_size))
                 escape_progress = (max_esc - esc_dist) / max(1.0, max_esc)
                 escape_progress = float(np.clip(escape_progress, 0.0, 1.0))
                 escape_penalty = -self.guard_escape_penalty_lambda * escape_progress
@@ -375,7 +419,7 @@ class CustomEnvironment(ParallelEnv):
                 delta = self._prev_prisoner_escape_dist - esc_dist
                 self._prev_prisoner_escape_dist = esc_dist
 
-                max_esc = float(np.sqrt(2) * (self.grid_size - 1))
+                max_esc = float(np.sqrt(2) * (self.grid_size))
                 progress_reward = float(delta) / max(1.0, max_esc)
 
                 # Penalize being close to guards (based on total L2 distance)
@@ -410,17 +454,18 @@ class CustomEnvironment(ParallelEnv):
     # -------------------------
     @functools.lru_cache(maxsize=None)
     def action_space(self, agent):
-        return Discrete(4)
+        return Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
         if agent == "prisoner":
-            # prisoner_pos(2) + guards(2*num_guards) + escape_pos(2)
-            dim = 2 + 2 * self.num_guards + 2
+            # prisoner_pos(2) + prisoner_vel(2) + guards(pos+vel)(4*num_guards) + escape_pos(2)
+            dim = 2 + 2 + 4 * self.num_guards + 2
             return Box(low=0.0, high=1.0, shape=(dim,), dtype=np.float32)
 
-        # guards: my_pos(2) + prisoner(2) + other_guards(2*(N-1)) + escape(2) + id_onehot(N)
-        dim = 2 + 2 + 2 * (self.num_guards - 1) + 2 + self.num_guards
+        # guards: my_pos(2) + my_vel(2) + prisoner(pos+vel)(4)
+        # + other_guards(pos+vel)(4*(N-1)) + escape(2) + id_onehot(N)
+        dim = 2 + 2 + 4 + 4 * (self.num_guards - 1) + 2 + self.num_guards
         return Box(low=0.0, high=1.0, shape=(dim,), dtype=np.float32)
 
     # -------------------------
@@ -441,42 +486,36 @@ class CustomEnvironment(ParallelEnv):
             self.clock = pygame.time.Clock()
 
         canvas = pygame.Surface((self.window_size, self.window_size))
-        canvas.fill((255, 255, 255))
+        canvas.fill((245, 245, 245))
 
-        for x in range(self.grid_size + 1):
-            pygame.draw.line(
-                canvas, (0, 0, 0),
-                (x * self.cell_size, 0),
-                (x * self.cell_size, self.window_size), 1
-            )
-        for y in range(self.grid_size + 1):
-            pygame.draw.line(
-                canvas, (0, 0, 0),
-                (0, y * self.cell_size),
-                (self.window_size, y * self.cell_size), 1
-            )
+        # Draw boundary
+        pygame.draw.rect(canvas, (220, 220, 220), pygame.Rect(0, 0, self.window_size, self.window_size), 2)
 
-        pygame.draw.rect(
-            canvas, (255, 0, 0),
-            pygame.Rect(
-                self.escape_pos[0] * self.cell_size,
-                self.escape_pos[1] * self.cell_size,
-                self.cell_size, self.cell_size
-            )
+        esc_r = max(3, int(self.escape_radius * self.cell_size))
+        pygame.draw.circle(
+            canvas,
+            (255, 0, 0),
+            (int(self.escape_pos[0] * self.cell_size), int(self.escape_pos[1] * self.cell_size)),
+            esc_r,
         )
 
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
         pygame.draw.circle(
             canvas, (0, 0, 255),
-            ((prisoner_pos[0] + 0.5) * self.cell_size, (prisoner_pos[1] + 0.5) * self.cell_size),
-            self.cell_size / 3
+            (int(prisoner_pos[0] * self.cell_size), int(prisoner_pos[1] * self.cell_size)),
+            max(4, int(self.cell_size / 3))
         )
 
         for i in range(self.num_guards):
             guard_pos = self.agents_obj[f"guard_{i}"]["pos"]
-            center_x = (guard_pos[0] + 0.5) * self.cell_size
-            center_y = (guard_pos[1] + 0.5) * self.cell_size
-            pygame.draw.circle(canvas, (0, 255, 0), (center_x, center_y), self.cell_size / 3)
+            center_x = guard_pos[0] * self.cell_size
+            center_y = guard_pos[1] * self.cell_size
+            pygame.draw.circle(
+                canvas,
+                (0, 255, 0),
+                (int(center_x), int(center_y)),
+                max(4, int(self.cell_size / 3)),
+            )
 
             if self.font:
                 text_surf = self.font.render(str(i), True, (0, 0, 0))

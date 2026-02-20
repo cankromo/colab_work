@@ -10,10 +10,21 @@ from stable_baselines3.common.vec_env import VecMonitor
 from .custom_environment import CustomEnvironment
 from .callbacks_metrics import EpisodeReturnLogger
 
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+CONTENT_DIR = os.path.dirname(BASE_DIR)
+
+
+def resolve_path(p: str) -> str:
+    if os.path.isabs(p):
+        return p
+    if p.startswith("colab_work/"):
+        return os.path.join(CONTENT_DIR, p)
+    return os.path.join(BASE_DIR, p)
+
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--grid_size", type=int, default=10)
+    p.add_argument("--grid_size", type=int, default=100)
     p.add_argument("--num_guards", type=int, default=2)
     p.add_argument("--max_steps", type=int, default=100)
     p.add_argument("--timesteps", type=int, default=200_000)
@@ -21,20 +32,24 @@ def main():
     p.add_argument("--num_cpus", type=int, default=1)
     p.add_argument("--seed", type=int, default=0)
 
-    p.add_argument("--guard_model_path", type=str, default="models/guard_model.zip")
-    p.add_argument("--save_path", type=str, default="models/prisoner_model.zip")
+    p.add_argument("--guard_model_path", type=str, default="colab_work/results/exp5/models/guard_model.zip")
+    p.add_argument("--save_path", type=str, default="colab_work/results/exp5/models/prisoner_model.zip")
 
-    p.add_argument("--log_dir", type=str, default="logs")
+    p.add_argument("--log_dir", type=str, default="colab_work/results/exp5/log")
     p.add_argument("--run_name", type=str, default="prisoner")
 
     args = p.parse_args()
+
+    guard_model_path = resolve_path(args.guard_model_path)
+    save_path = resolve_path(args.save_path)
+    log_dir = resolve_path(args.log_dir)
 
     env = CustomEnvironment(
         grid_size=args.grid_size,
         num_guards=args.num_guards,
         max_steps=args.max_steps,
         training_side="prisoner",
-        guard_model_path=args.guard_model_path,
+        guard_model_path=guard_model_path,
         render_mode=None,
         seed=args.seed,
     )
@@ -46,7 +61,7 @@ def main():
     # ✅ episodic return için şart
     env = VecMonitor(env)
 
-    run_path = os.path.join(args.log_dir, args.run_name)
+    run_path = os.path.join(log_dir, args.run_name)
     new_logger = configure(run_path, ["stdout", "csv", "tensorboard"])
 
     model = PPO(
@@ -63,14 +78,14 @@ def main():
     )
     model.set_logger(new_logger)
 
-    cb = EpisodeReturnLogger(log_dir=args.log_dir, run_name=args.run_name)
+    cb = EpisodeReturnLogger(log_dir=log_dir, run_name=args.run_name)
 
-    os.makedirs(os.path.dirname(args.save_path) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
     model.learn(total_timesteps=args.timesteps, callback=cb)
-    model.save(args.save_path)
+    model.save(save_path)
 
     env.close()
-    print("✅ Saved prisoner model:", args.save_path)
+    print("✅ Saved prisoner model:", save_path)
     print("✅ Logs at:", run_path)
 
 
