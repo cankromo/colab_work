@@ -1,12 +1,22 @@
-import os
-os.environ["SDL_VIDEODRIVER"] = "dummy"
-
 import argparse
 import csv
+import os
+
 import numpy as np
 from stable_baselines3 import PPO
 
 from .custom_environment import CustomEnvironment
+
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+CONTENT_DIR = os.path.dirname(BASE_DIR)
+
+
+def resolve_path(p: str) -> str:
+    if os.path.isabs(p):
+        return p
+    if p.startswith("colab_work/"):
+        return os.path.join(CONTENT_DIR, p)
+    return os.path.join(BASE_DIR, p)
 
 
 def main():
@@ -17,20 +27,22 @@ def main():
     p.add_argument("--max_steps", type=int, default=100)
     p.add_argument("--seed", type=int, default=0)
 
-    p.add_argument("--guard_model_path", type=str, default="models/guard_model.zip")
-    p.add_argument("--prisoner_model_path", type=str, default="models/prisoner_model.zip")
-
-    p.add_argument("--out_csv", type=str, default="eval/rollout_returns.csv")
+    p.add_argument("--guard_model_path", type=str, default="colab_work/results/exp5/models/guard_model.zip")
+    p.add_argument("--prisoner_model_path", type=str, default="colab_work/results/exp5/models/prisoner_model.zip")
+    p.add_argument("--out_csv", type=str, default="colab_work/eval/rollout_returns.csv")
     args = p.parse_args()
 
-    os.makedirs(os.path.dirname(args.out_csv) or ".", exist_ok=True)
+    guard_model_path = resolve_path(args.guard_model_path)
+    prisoner_model_path = resolve_path(args.prisoner_model_path)
+    out_csv = resolve_path(args.out_csv)
 
-    guard_model = PPO.load(args.guard_model_path)
-    prisoner_model = PPO.load(args.prisoner_model_path)
+    os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
 
+    guard_model = PPO.load(guard_model_path)
+    prisoner_model = PPO.load(prisoner_model_path)
     rng = np.random.default_rng(args.seed)
 
-    with open(args.out_csv, "w", newline="", encoding="utf-8") as f:
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["episode", "return_prisoner", "return_guards_mean", "outcome", "length"])
 
@@ -54,20 +66,18 @@ def main():
                 actions = {}
 
                 pa, _ = prisoner_model.predict(np.array(obs["prisoner"]), deterministic=True)
-                actions["prisoner"] = int(pa)
+                actions["prisoner"] = np.array(pa, dtype=np.float32)
 
                 for i in range(args.num_guards):
                     gid = f"guard_{i}"
                     ga, _ = guard_model.predict(np.array(obs[gid]), deterministic=True)
-                    actions[gid] = int(ga)
+                    actions[gid] = np.array(ga, dtype=np.float32)
 
                 obs, rewards, terms, truncs, infos = env.step(actions)
                 last_infos = infos
                 steps += 1
 
-                # rewards dict play modunda hem prisoner hem guards içerir
                 ep_ret_p += float(rewards.get("prisoner", 0.0))
-                # guards toplamını alıp ortalama yazalım
                 gsum = 0.0
                 for i in range(args.num_guards):
                     gsum += float(rewards.get(f"guard_{i}", 0.0))
@@ -77,11 +87,10 @@ def main():
             env.close()
 
             w.writerow([ep, ep_ret_p, ep_ret_g, outcome, steps])
-
             if ep % 1000 == 0:
                 print(f"[{ep}/{args.episodes}] last_outcome={outcome}, last_len={steps}")
 
-    print("✅ Wrote:", args.out_csv)
+    print("Wrote:", out_csv)
 
 
 if __name__ == "__main__":

@@ -81,6 +81,7 @@ class CustomEnvironment(ParallelEnv):
         self.agents_obj = {}
         self.escape_pos = np.zeros(2, dtype=np.float32)
         self.timestep = 0
+        self.last_applied_accel = {}
 
         # shaping baselines
         self._prev_total_guard_dist = None
@@ -113,7 +114,7 @@ class CustomEnvironment(ParallelEnv):
     # -------------------------
     # Helpers
     # -------------------------
-    def _apply_accel(self, pos: np.ndarray, vel: np.ndarray, accel: np.ndarray) -> None:
+    def _apply_accel(self, pos: np.ndarray, vel: np.ndarray, accel: np.ndarray) -> np.ndarray:
         a = np.array(accel, dtype=np.float32)
         if a.shape != (2,):
             a = a.reshape(2,)
@@ -131,6 +132,7 @@ class CustomEnvironment(ParallelEnv):
 
         pos[:] = pos + vel
         pos[:] = np.clip(pos, 0.0, self.grid_size)
+        return a
 
     def _total_guard_distance_l2(self) -> float:
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
@@ -259,6 +261,7 @@ class CustomEnvironment(ParallelEnv):
 
         self.agents = copy(self.possible_agents)
         self.timestep = 0
+        self.last_applied_accel = {"prisoner": np.zeros(2, dtype=np.float32)}
 
         # sample initial state (avoid immediate terminal)
         for _ in range(200):
@@ -278,6 +281,7 @@ class CustomEnvironment(ParallelEnv):
                     ),
                     "vel": np.zeros(2, dtype=np.float32),
                 }
+                self.last_applied_accel[f"guard_{i}"] = np.zeros(2, dtype=np.float32)
             self.escape_pos = np.array(
                 [random.uniform(0.0, self.grid_size), random.uniform(0.0, self.grid_size)],
                 dtype=np.float32,
@@ -341,14 +345,14 @@ class CustomEnvironment(ParallelEnv):
             )
 
         # --- apply moves
-        self._apply_accel(
+        self.last_applied_accel["prisoner"] = self._apply_accel(
             self.agents_obj["prisoner"]["pos"],
             self.agents_obj["prisoner"]["vel"],
             full_actions["prisoner"],
         )
         for i in range(self.num_guards):
             gid = f"guard_{i}"
-            self._apply_accel(
+            self.last_applied_accel[gid] = self._apply_accel(
                 self.agents_obj[gid]["pos"],
                 self.agents_obj[gid]["vel"],
                 full_actions[gid],
@@ -482,7 +486,7 @@ class CustomEnvironment(ParallelEnv):
 
         if (self.render_mode in ["human", "rgb_array"]) and self.font is None:
             pygame.font.init()
-            self.font = pygame.font.SysFont(None, int(self.cell_size / 2))
+            self.font = pygame.font.SysFont(None, max(18, int(self.window_size * 0.03)))
             self.clock = pygame.time.Clock()
 
         canvas = pygame.Surface((self.window_size, self.window_size))
@@ -503,7 +507,7 @@ class CustomEnvironment(ParallelEnv):
         pygame.draw.circle(
             canvas, (0, 0, 255),
             (int(prisoner_pos[0] * self.cell_size), int(prisoner_pos[1] * self.cell_size)),
-            max(4, int(self.cell_size / 3))
+            max(8, int(self.cell_size * 0.9))
         )
 
         for i in range(self.num_guards):
@@ -514,13 +518,47 @@ class CustomEnvironment(ParallelEnv):
                 canvas,
                 (0, 255, 0),
                 (int(center_x), int(center_y)),
-                max(4, int(self.cell_size / 3)),
+                max(8, int(self.cell_size * 0.9)),
             )
 
             if self.font:
                 text_surf = self.font.render(str(i), True, (0, 0, 0))
                 text_rect = text_surf.get_rect(center=(center_x, center_y))
                 canvas.blit(text_surf, text_rect)
+
+        if self.font:
+            hud_lines = [f"t={self.timestep}"]
+            p = self.agents_obj["prisoner"]
+            pa = self.last_applied_accel.get("prisoner", np.zeros(2, dtype=np.float32))
+            hud_lines.append(
+                "P "
+                f"pos=({p['pos'][0]:.2f},{p['pos'][1]:.2f}) "
+                f"vel=({p['vel'][0]:.2f},{p['vel'][1]:.2f}) "
+                f"acc=({pa[0]:.2f},{pa[1]:.2f})"
+            )
+            for i in range(self.num_guards):
+                gid = f"guard_{i}"
+                g = self.agents_obj[gid]
+                ga = self.last_applied_accel.get(gid, np.zeros(2, dtype=np.float32))
+                hud_lines.append(
+                    f"G{i} "
+                    f"pos=({g['pos'][0]:.2f},{g['pos'][1]:.2f}) "
+                    f"vel=({g['vel'][0]:.2f},{g['vel'][1]:.2f}) "
+                    f"acc=({ga[0]:.2f},{ga[1]:.2f})"
+                )
+
+            line_height = self.font.get_height() + 6
+            panel_h = 10 + line_height * len(hud_lines)
+            panel_w = int(self.window_size * 0.72)
+            panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            panel.fill((255, 255, 255, 215))
+            canvas.blit(panel, (6, 6))
+
+            y = 12
+            for line in hud_lines:
+                text_surf = self.font.render(line, True, (20, 20, 20))
+                canvas.blit(text_surf, (12, y))
+                y += line_height
 
         if self.render_mode == "human":
             self.window.blit(canvas, canvas.get_rect())
