@@ -19,8 +19,10 @@ class EpisodeReturnLogger(BaseCallback):
         self._fh = None
 
     def _on_training_start(self):
-        self._fh = open(self.path, "w", encoding="utf-8")
-        self._fh.write("timesteps,ep_return,ep_length\n")
+        mode = "a" if os.path.exists(self.path) and os.path.getsize(self.path) > 0 else "w"
+        self._fh = open(self.path, mode, encoding="utf-8")
+        if mode == "w":
+            self._fh.write("timesteps,ep_return,ep_length\n")
         self._fh.flush()
 
     def _on_step(self) -> bool:

@@ -22,9 +22,10 @@ def main():
     p.add_argument("--prisoner_heuristic", action="store_true")
 
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--prisoner_escape_prob", type=float, default=0.5)
     args = p.parse_args()
 
-    np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
 
     guard_model = PPO.load(args.guard_model_path)
     prisoner_model = None if args.prisoner_heuristic else PPO.load(args.prisoner_model_path)
@@ -63,22 +64,26 @@ def main():
                         closest = guards[int(np.argmin(dists))]
                         escape_vec = escape_pos - prisoner_pos
                         avoid_vec = prisoner_pos - closest
-                        final_vec = 2 * escape_vec + avoid_vec
-                        if abs(final_vec[0]) > abs(final_vec[1]):
-                            actions["prisoner"] = 1 if final_vec[0] > 0 else 0
+                        if rng.random() < args.prisoner_escape_prob:
+                            final_vec = escape_vec
                         else:
-                            actions["prisoner"] = 3 if final_vec[1] > 0 else 2
+                            final_vec = avoid_vec
+                        norm = float(np.linalg.norm(final_vec))
+                        if norm == 0:
+                            actions["prisoner"] = rng.uniform(-1.0, 1.0, size=(2,)).astype(np.float32)
+                        else:
+                            actions["prisoner"] = (final_vec / norm).astype(np.float32)
                     else:
-                        actions["prisoner"] = np.random.randint(0, 4)
+                        actions["prisoner"] = rng.uniform(-1.0, 1.0, size=(2,)).astype(np.float32)
                 else:
                     pa, _ = prisoner_model.predict(np.array(obs["prisoner"]), deterministic=True)
-                    actions["prisoner"] = int(pa)
+                    actions["prisoner"] = np.array(pa, dtype=np.float32)
 
             # guards actions
             for i in range(args.num_guards):
                 gid = f"guard_{i}"
                 ga, _ = guard_model.predict(np.array(obs[gid]), deterministic=True)
-                actions[gid] = int(ga)
+                actions[gid] = np.array(ga, dtype=np.float32)
 
             obs, rewards, terms, truncs, infos = env.step(actions)
             last_infos = infos

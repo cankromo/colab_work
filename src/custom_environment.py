@@ -34,14 +34,17 @@ class CustomEnvironment(ParallelEnv):
         guard_model_path=None,
         prisoner_model_path=None,
         prisoner_use_heuristic=True,
+        # Heuristic prisoner behavior (when training guards)
+        prisoner_escape_prob=0.5,
         # Continuous world params
         max_speed=2.0,
         max_accel=1.0,
-        capture_radius=0.3,
-        escape_radius=0.3,
+        capture_radius=2.0,
+        escape_radius=2.0,
         # Reward shaping weights
-        guard_escape_penalty_lambda=0.05,
-        guard_time_penalty=0.01,
+        guard_approach_reward_scale=8.0,
+        guard_escape_penalty_lambda=0.01,
+        guard_time_penalty=0.001,
         prisoner_guard_penalty_lambda=0.05,
         prisoner_time_penalty=0.01,
     ):
@@ -54,12 +57,14 @@ class CustomEnvironment(ParallelEnv):
         self.guard_model_path = guard_model_path
         self.prisoner_model_path = prisoner_model_path
         self.prisoner_use_heuristic = prisoner_use_heuristic
+        self.prisoner_escape_prob = float(prisoner_escape_prob)
 
         self.max_speed = float(max_speed)
         self.max_accel = float(max_accel)
         self.capture_radius = float(capture_radius)
         self.escape_radius = float(escape_radius)
 
+        self.guard_approach_reward_scale = float(guard_approach_reward_scale)
         self.guard_escape_penalty_lambda = float(guard_escape_penalty_lambda)
         self.guard_time_penalty = float(guard_time_penalty)
         self.prisoner_guard_penalty_lambda = float(prisoner_guard_penalty_lambda)
@@ -224,7 +229,11 @@ class CustomEnvironment(ParallelEnv):
 
         escape_vec = escape_pos - prisoner_pos
         avoid_vec = prisoner_pos - closest_guard
-        final_vec = 2 * escape_vec + avoid_vec
+        # With probability p, move toward escape. Otherwise move away from closest guard.
+        if random.random() < self.prisoner_escape_prob:
+            final_vec = escape_vec
+        else:
+            final_vec = avoid_vec
 
         norm = float(np.linalg.norm(final_vec))
         if norm == 0:
@@ -404,7 +413,7 @@ class CustomEnvironment(ParallelEnv):
                 self._prev_total_guard_dist = total_guard_dist
 
                 max_ref = float(self.grid_size * self.num_guards * 1.5)
-                approach_reward = float(dist_delta) / max(1.0, max_ref)
+                approach_reward = self.guard_approach_reward_scale * float(dist_delta) / max(1.0, max_ref)
 
                 # Penalize prisoner approaching escape
                 esc_dist = self._escape_distance_l2()
@@ -465,12 +474,13 @@ class CustomEnvironment(ParallelEnv):
         if agent == "prisoner":
             # prisoner_pos(2) + prisoner_vel(2) + guards(pos+vel)(4*num_guards) + escape_pos(2)
             dim = 2 + 2 + 4 * self.num_guards + 2
-            return Box(low=0.0, high=1.0, shape=(dim,), dtype=np.float32)
+            # Some observation entries (velocities) are normalized to [-1, 1].
+            return Box(low=-1.0, high=1.0, shape=(dim,), dtype=np.float32)
 
         # guards: my_pos(2) + my_vel(2) + prisoner(pos+vel)(4)
         # + other_guards(pos+vel)(4*(N-1)) + escape(2) + id_onehot(N)
         dim = 2 + 2 + 4 + 4 * (self.num_guards - 1) + 2 + self.num_guards
-        return Box(low=0.0, high=1.0, shape=(dim,), dtype=np.float32)
+        return Box(low=-1.0, high=1.0, shape=(dim,), dtype=np.float32)
 
     # -------------------------
     # Render (same drawing style)
@@ -496,11 +506,19 @@ class CustomEnvironment(ParallelEnv):
         pygame.draw.rect(canvas, (220, 220, 220), pygame.Rect(0, 0, self.window_size, self.window_size), 2)
 
         esc_r = max(3, int(self.escape_radius * self.cell_size))
+        # Draw exact terminal radius for escape to avoid visual ambiguity.
+        pygame.draw.circle(
+            canvas,
+            (255, 160, 160),
+            (int(self.escape_pos[0] * self.cell_size), int(self.escape_pos[1] * self.cell_size)),
+            esc_r,
+            2,
+        )
         pygame.draw.circle(
             canvas,
             (255, 0, 0),
             (int(self.escape_pos[0] * self.cell_size), int(self.escape_pos[1] * self.cell_size)),
-            esc_r,
+            max(3, int(self.cell_size * 0.35)),
         )
 
         prisoner_pos = self.agents_obj["prisoner"]["pos"]
@@ -520,6 +538,8 @@ class CustomEnvironment(ParallelEnv):
                 (int(center_x), int(center_y)),
                 max(8, int(self.cell_size * 0.9)),
             )
+            cap_r = max(2, int(self.capture_radius * self.cell_size))
+            pygame.draw.circle(canvas, (150, 220, 150), (int(center_x), int(center_y)), cap_r, 2)
 
             if self.font:
                 text_surf = self.font.render(str(i), True, (0, 0, 0))
