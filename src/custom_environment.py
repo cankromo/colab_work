@@ -44,6 +44,8 @@ class CustomEnvironment(ParallelEnv):
         # Reward shaping weights
         guard_approach_reward_scale=8.0,
         guard_escape_penalty_lambda=0.01,
+        guard_escape_penalty_boost=50.0,
+        guard_escape_penalty_trigger_mult=3.0,
         guard_time_penalty=0.001,
         prisoner_guard_penalty_lambda=0.05,
         prisoner_time_penalty=0.01,
@@ -66,6 +68,8 @@ class CustomEnvironment(ParallelEnv):
 
         self.guard_approach_reward_scale = float(guard_approach_reward_scale)
         self.guard_escape_penalty_lambda = float(guard_escape_penalty_lambda)
+        self.guard_escape_penalty_boost = float(guard_escape_penalty_boost)
+        self.guard_escape_penalty_trigger_mult = float(guard_escape_penalty_trigger_mult)
         self.guard_time_penalty = float(guard_time_penalty)
         self.prisoner_guard_penalty_lambda = float(prisoner_guard_penalty_lambda)
         self.prisoner_time_penalty = float(prisoner_time_penalty)
@@ -421,6 +425,16 @@ class CustomEnvironment(ParallelEnv):
                 escape_progress = (max_esc - esc_dist) / max(1.0, max_esc)
                 escape_progress = float(np.clip(escape_progress, 0.0, 1.0))
                 escape_penalty = -self.guard_escape_penalty_lambda * escape_progress
+
+                # If prisoner gets very close to escape, sharply increase guard penalty.
+                # Trigger distance scales with escape_radius to keep behavior consistent
+                # across different environment sizes.
+                trigger_dist = max(1e-6, self.escape_radius * self.guard_escape_penalty_trigger_mult)
+                if esc_dist <= trigger_dist:
+                    closeness = float(1.0 - (esc_dist / trigger_dist))
+                    closeness = float(np.clip(closeness, 0.0, 1.0))
+                    # Quadratic boost for "astronomical" urgency near escape.
+                    escape_penalty -= self.guard_escape_penalty_boost * (closeness ** 2)
 
                 shaped = approach_reward + escape_penalty - self.guard_time_penalty
                 for a in rewards:

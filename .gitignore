@@ -1,8 +1,43 @@
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python/
+build/
+dist/
+*.egg-info/
+.env
+.venv/
+venv/
 
+# IDEs and Editors
+.idea/
+.vscode/
+.history/
+*.iml
+*.swp
+*~
+node_modules/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook specific
 .ipynb_checkpoints/
 
-.env
-venv/
+# Output and Data
+
+# Private and temporary files
+*.log
+*.tmp
+*.bak
+
+# Credentials and sensitive information
+*.key
+*.pem
+*.mp4
+# Colab specific (if any, often covered by other rules)
+# For example, if Colab creates specific temp directories you don't want to commit
